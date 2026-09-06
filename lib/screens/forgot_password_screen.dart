@@ -55,7 +55,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       MaterialPageRoute(
         builder: (_) => PasswordResetOtpScreen(
           email: email,
-          initialOtp: res['testOtp'] as String?,
         ),
       ),
     );

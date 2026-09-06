@@ -7,12 +7,9 @@ import 'create_new_password_screen.dart';
 
 class PasswordResetOtpScreen extends StatefulWidget {
   final String email;
-  final String? initialOtp;
-
   const PasswordResetOtpScreen({
     super.key,
     required this.email,
-    this.initialOtp,
   });
 
   @override
@@ -27,7 +24,6 @@ class _PasswordResetOtpScreenState extends State<PasswordResetOtpScreen> {
   bool _isLoading = false;
   bool _isResending = false;
   String? _errorMessage;
-  String? _currentOtp;
 
   Timer? _cooldownTimer;
   int _secondsRemaining = 60;
@@ -37,12 +33,6 @@ class _PasswordResetOtpScreenState extends State<PasswordResetOtpScreen> {
   void initState() {
     super.initState();
     _startCooldownTimer();
-    _currentOtp = (widget.initialOtp != null && widget.initialOtp!.trim().length == 6)
-        ? widget.initialOtp!.trim()
-        : '123456';
-    for (int i = 0; i < 6; i++) {
-      _otpControllers[i].text = _currentOtp![i];
-    }
   }
 
   @override
@@ -138,19 +128,16 @@ class _PasswordResetOtpScreenState extends State<PasswordResetOtpScreen> {
     if (!mounted) return;
     setState(() => _isResending = false);
 
-    final newOtp = res['testOtp'] as String? ?? '123456';
-    setState(() {
-      _currentOtp = newOtp;
-    });
-    for (int i = 0; i < 6; i++) {
-      _otpControllers[i].text = newOtp.trim()[i];
+    for (var c in _otpControllers) {
+      c.clear();
     }
+    _otpFocusNodes[0].requestFocus();
     _startCooldownTimer();
 
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(res['message'] ?? 'Verification code resent!'),
-        backgroundColor: const Color(0xFF10B981),
+      const SnackBar(
+        content: Text('A verification code has been sent to your email!'),
+        backgroundColor: Color(0xFF10B981),
       ),
     );
   }
@@ -213,36 +200,7 @@ class _PasswordResetOtpScreenState extends State<PasswordResetOtpScreen> {
                   ],
                 ),
               ),
-
-              // Auto-filled OTP Banner
-              if (_currentOtp != null) ...[
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF10B981).withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFF10B981).withOpacity(0.35)),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.mark_email_read_outlined, color: Color(0xFF10B981), size: 20),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          'Verification code: $_currentOtp (auto-filled)',
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF10B981),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-              const SizedBox(height: 24),
+              const SizedBox(height: 32),
 
               // Error Banner
               if (_errorMessage != null) ...[

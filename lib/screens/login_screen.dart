@@ -85,7 +85,6 @@ class _LoginScreenState extends State<LoginScreen> {
             email: res['email'],
             username: username,
             isForgotPassword: false,
-            initialOtp: res['testOtp'] as String?,
           ),
         ),
       );

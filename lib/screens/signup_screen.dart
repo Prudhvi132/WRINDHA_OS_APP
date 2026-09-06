@@ -197,7 +197,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
     setState(() => _isLoading = false);
 
     if (res['success'] == true) {
-      final testOtp = res['testOtp'] as String?;
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -205,7 +204,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
             email: email,
             username: username,
             isForgotPassword: false,
-            initialOtp: testOtp,
           ),
         ),
       );

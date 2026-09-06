@@ -128,13 +128,6 @@
   ],
   "coupon_usages": [],
   "auth_otps": {
-    "timob33984@fidhost.com": {
-      "otp": "786288",
-      "username": "fghnjmk",
-      "passwordHash": "e83eb7febce6ff5d19f3ea5a382c1f26:4240d03cbd2c820eb77c2589932175282b2a2b7937fc58f32e1386bc85e85e834869f8144a239cf8d1ea0ea632dd224cb65d5d18540904224f526e9ec516573f",
-      "referralCode": null,
-      "expiresAt": 1788624377853
-    },
     "test_otp_verify@example.com": {
       "otp": "486254",
       "username": "testuser_6574",
