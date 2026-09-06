@@ -114,6 +114,29 @@
       "is_email_verified": true,
       "created_at": "2026-09-06T10:49:29.702Z",
       "updated_at": "2026-09-06T10:49:29.702Z"
+    },
+    {
+      "id": "ff374146-b9f8-4613-9ff1-0360425faa2a",
+      "user_id": "ff374146-b9f8-4613-9ff1-0360425faa2a",
+      "username": "sara",
+      "name": "Sara",
+      "display_name": "Sara",
+      "email": "timob33984@fidhost.com",
+      "password": "7b36626f5914cb95c5d3a92a389f4a7d:fc559bf96560a6b95a06b3ca13443bfb2d32c4fa63d077058a0b84a6cc0fa13efda44910c43b77474af3c052a1685c1f20ec7af76c084133106096eaabce749f",
+      "password_hash": "7b36626f5914cb95c5d3a92a389f4a7d:fc559bf96560a6b95a06b3ca13443bfb2d32c4fa63d077058a0b84a6cc0fa13efda44910c43b77474af3c052a1685c1f20ec7af76c084133106096eaabce749f",
+      "is_premium": false,
+      "isPremium": false,
+      "subscription_plan": "FREE",
+      "subscriptionPlan": "FREE",
+      "focus_score": 85,
+      "focusScore": 85,
+      "active_streak": 1,
+      "activeStreak": 1,
+      "referral_code": "WOS8046",
+      "referralCode": "WOS6595",
+      "is_email_verified": true,
+      "created_at": "2026-09-06T10:53:22.421Z",
+      "updated_at": "2026-09-06T10:53:22.421Z"
     }
   ],
   "user_subscriptions": [
@@ -181,6 +204,19 @@
       "transaction_id": null,
       "created_at": "2026-09-06T10:49:29.702Z",
       "updated_at": "2026-09-06T10:49:29.702Z"
+    },
+    {
+      "id": "9059bc6e-d069-4f92-bf4a-3a305b7597c5",
+      "user_id": "ff374146-b9f8-4613-9ff1-0360425faa2a",
+      "userId": "ff374146-b9f8-4613-9ff1-0360425faa2a",
+      "plan": "free",
+      "status": "active",
+      "started_at": "2026-09-06T10:53:22.421Z",
+      "expires_at": null,
+      "payment_provider": "NONE",
+      "transaction_id": null,
+      "created_at": "2026-09-06T10:53:22.421Z",
+      "updated_at": "2026-09-06T10:53:22.421Z"
     }
   ],
   "tasks": [
