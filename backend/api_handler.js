@@ -293,8 +293,11 @@ async function handleApiRequest(req, res) {
       is_email_verified: true,
     });
 
-    delete db.auth_otps[cleanEmail];
-    saveDatabase(db);
+    const latestDb = loadDatabase();
+    if (latestDb.auth_otps) {
+      delete latestDb.auth_otps[cleanEmail];
+      saveDatabase(latestDb);
+    }
 
     const token = generateJwtToken({ id: newUser.id, email: newUser.email, username: newUser.username });
     return sendJSON(res, 200, {
@@ -438,8 +441,11 @@ async function handleApiRequest(req, res) {
       return sendJSON(res, 400, { success: false, message: 'Incorrect OTP. Please enter the valid 6-digit code.' });
     }
 
-    delete db.auth_otps[cleanEmail];
-    saveDatabase(db);
+    const latestDb = loadDatabase();
+    if (latestDb.auth_otps) {
+      delete latestDb.auth_otps[cleanEmail];
+      saveDatabase(latestDb);
+    }
 
     const resetToken = generateJwtToken({ email: cleanEmail, purpose: 'password_reset' }, 60);
     return sendJSON(res, 200, {
