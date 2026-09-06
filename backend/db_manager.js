@@ -368,6 +368,10 @@ class DatabaseManager {
       user.subscription_plan = updates.subscription_plan.toUpperCase();
       user.subscriptionPlan = updates.subscription_plan.toUpperCase();
     }
+    if (updates.password || updates.password_hash) {
+      user.password = updates.password_hash || hashPassword(updates.password);
+      user.password_hash = updates.password_hash || hashPassword(updates.password);
+    }
     user.updated_at = new Date().toISOString();
 
     saveDatabase(db);

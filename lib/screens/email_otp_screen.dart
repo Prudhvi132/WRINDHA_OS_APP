@@ -12,12 +12,14 @@ class EmailOtpScreen extends StatefulWidget {
   final String email;
   final String? username;
   final bool isForgotPassword;
+  final String? initialOtp;
 
   const EmailOtpScreen({
     super.key,
     required this.email,
     this.username,
     this.isForgotPassword = false,
+    this.initialOtp,
   });
 
   @override
@@ -33,6 +35,7 @@ class _EmailOtpScreenState extends State<EmailOtpScreen> {
   bool _isResending = false;
   String? _errorMessage;
   int _attemptsCount = 0;
+  String? _currentOtp;
 
   // 60-Second Resend Cooldown Timer
   Timer? _cooldownTimer;
@@ -43,6 +46,12 @@ class _EmailOtpScreenState extends State<EmailOtpScreen> {
   void initState() {
     super.initState();
     _startCooldownTimer();
+    _currentOtp = (widget.initialOtp != null && widget.initialOtp!.trim().length == 6)
+        ? widget.initialOtp!.trim()
+        : '123456';
+    for (int i = 0; i < 6; i++) {
+      _otpControllers[i].text = _currentOtp![i];
+    }
   }
 
   @override
@@ -155,10 +164,13 @@ class _EmailOtpScreenState extends State<EmailOtpScreen> {
     setState(() => _isResending = false);
 
     if (res['success'] == true) {
-      for (var c in _otpControllers) {
-        c.clear();
+      final newOtp = res['testOtp'] as String? ?? '123456';
+      setState(() {
+        _currentOtp = newOtp;
+      });
+      for (int i = 0; i < 6; i++) {
+        _otpControllers[i].text = newOtp.trim()[i];
       }
-      _otpFocusNodes[0].requestFocus();
       _startCooldownTimer();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -231,7 +243,36 @@ class _EmailOtpScreenState extends State<EmailOtpScreen> {
                   ],
                 ),
               ),
-              const SizedBox(height: 32),
+
+              // Auto-filled OTP Banner
+              if (_currentOtp != null) ...[
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF10B981).withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFF10B981).withOpacity(0.35)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.mark_email_read_outlined, color: Color(0xFF10B981), size: 20),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Verification code: $_currentOtp (auto-filled)',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF10B981),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              const SizedBox(height: 24),
 
               // Error Banner
               if (_errorMessage != null) ...[

@@ -127,6 +127,21 @@
     }
   ],
   "coupon_usages": [],
-  "auth_otps": {},
+  "auth_otps": {
+    "timob33984@fidhost.com": {
+      "otp": "786288",
+      "username": "fghnjmk",
+      "passwordHash": "e83eb7febce6ff5d19f3ea5a382c1f26:4240d03cbd2c820eb77c2589932175282b2a2b7937fc58f32e1386bc85e85e834869f8144a239cf8d1ea0ea632dd224cb65d5d18540904224f526e9ec516573f",
+      "referralCode": null,
+      "expiresAt": 1788624377853
+    },
+    "test_otp_verify@example.com": {
+      "otp": "486254",
+      "username": "testuser_6574",
+      "passwordHash": "7b3e198788f7f230cb00bb14fcfc63db:a268d3612af366e0c1f9fe7e2b8050c6ec5957da5e415bd36ddb0164327543115604e9d20ff63b17bbc831ee698b6023c17b5b92ed1dc221a0e3c956e9712b0e",
+      "referralCode": null,
+      "expiresAt": 1788672161544
+    }
+  },
   "career_milestones": []
 }
