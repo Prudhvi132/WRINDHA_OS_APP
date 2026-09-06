@@ -108,6 +108,21 @@ async function syncToSupabase(entityType, record) {
     if (!uid) return;
 
     if (entityType === 'profiles' || entityType === 'user_profiles') {
+      try {
+        const { data: authUser } = await supabase.auth.admin.getUserById(uid);
+        if (!authUser || !authUser.user) {
+          const userEmail = record.email || `${record.username || 'user'}_${Date.now()}@wrindhaos.in`;
+          await supabase.auth.admin.createUser({
+            id: uid,
+            email: userEmail,
+            email_confirm: true,
+            user_metadata: { username: record.username, name: record.name }
+          });
+        }
+      } catch (authCreateErr) {
+        console.warn('[Supabase Auth Provisioning Notice]:', authCreateErr.message);
+      }
+
       await supabase.from('profiles').upsert({
         id: uid,
         username: record.username || 'user',
@@ -116,13 +131,22 @@ async function syncToSupabase(entityType, record) {
         referral_code: record.referral_code || record.referralCode || 'WRINDHA',
       }, { onConflict: 'id' });
     } else if (entityType === 'subscriptions' || entityType === 'user_subscriptions') {
-      await supabase.from('subscriptions').upsert({
-        user_id: uid,
-        plan: (record.plan || '').toLowerCase() === 'pro' || (record.plan || '').toLowerCase() === 'premium' ? 'premium' : 'free',
-        status: record.status || 'active',
-        billing_provider: record.payment_provider || record.paymentProvider || 'NONE',
-        started_at: record.started_at || record.startedAt || new Date().toISOString(),
-      }, { onConflict: 'user_id' });
+      try {
+        const { data: existingSub } = await supabase.from('subscriptions').select('id').eq('user_id', uid).maybeSingle();
+        const subPayload = {
+          user_id: uid,
+          plan: (record.plan || '').toLowerCase() === 'pro' || (record.plan || '').toLowerCase() === 'premium' ? 'premium' : 'free',
+          status: record.status || 'active',
+          billing_provider: record.payment_provider || record.paymentProvider || 'NONE',
+          started_at: record.started_at || record.startedAt || new Date().toISOString(),
+        };
+        if (existingSub && existingSub.id) {
+          subPayload.id = existingSub.id;
+        }
+        await supabase.from('subscriptions').upsert(subPayload);
+      } catch (subUpsertErr) {
+        console.warn('[Supabase Subscription Sync Notice]:', subUpsertErr.message);
+      }
     } else if (entityType === 'tasks') {
       await supabase.from('tasks').upsert({
         id: ensureUuid(record.id),

@@ -91,6 +91,29 @@
       "is_email_verified": true,
       "created_at": "2026-09-06T10:44:44.293Z",
       "updated_at": "2026-09-06T10:44:44.293Z"
+    },
+    {
+      "id": "d2b74859-b9f7-416d-9550-910dda86531b",
+      "user_id": "d2b74859-b9f7-416d-9550-910dda86531b",
+      "username": "realuser_9190",
+      "name": "Realuser_9190",
+      "display_name": "Realuser_9190",
+      "email": "realuser_9190@wrindhaos.in",
+      "password": "2536e0f0d34ea887b3f3fc366a0204c3:ca5e390d712496486ad3cc6142eb4a913b6b9bd37ee147daabdfbed102b81614b6bea5394c15de894d7d445b2e5fa5d10b7c7256c1b2750c4b4619156ec70195",
+      "password_hash": "2536e0f0d34ea887b3f3fc366a0204c3:ca5e390d712496486ad3cc6142eb4a913b6b9bd37ee147daabdfbed102b81614b6bea5394c15de894d7d445b2e5fa5d10b7c7256c1b2750c4b4619156ec70195",
+      "is_premium": false,
+      "isPremium": false,
+      "subscription_plan": "FREE",
+      "subscriptionPlan": "FREE",
+      "focus_score": 85,
+      "focusScore": 85,
+      "active_streak": 1,
+      "activeStreak": 1,
+      "referral_code": "WOS4656",
+      "referralCode": "WOS4010",
+      "is_email_verified": true,
+      "created_at": "2026-09-06T10:49:29.702Z",
+      "updated_at": "2026-09-06T10:49:29.702Z"
     }
   ],
   "user_subscriptions": [
@@ -145,6 +168,19 @@
       "transaction_id": null,
       "created_at": "2026-09-06T10:44:44.293Z",
       "updated_at": "2026-09-06T10:44:44.293Z"
+    },
+    {
+      "id": "98978fef-833d-4e98-8222-cc01e7b0e6af",
+      "user_id": "d2b74859-b9f7-416d-9550-910dda86531b",
+      "userId": "d2b74859-b9f7-416d-9550-910dda86531b",
+      "plan": "free",
+      "status": "active",
+      "started_at": "2026-09-06T10:49:29.702Z",
+      "expires_at": null,
+      "payment_provider": "NONE",
+      "transaction_id": null,
+      "created_at": "2026-09-06T10:49:29.702Z",
+      "updated_at": "2026-09-06T10:49:29.702Z"
     }
   ],
   "tasks": [
