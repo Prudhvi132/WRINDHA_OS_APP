@@ -919,6 +919,12 @@ class _HabitTrackerScreenState extends State<HabitTrackerScreen> {
   // DIALOGS: ADD / EDIT / DELETE
   // ---------------------------------------------------------------------------
   void _showAddHabitDialog(BuildContext context) {
+    final provider = Provider.of<AppProvider>(context, listen: false);
+    if (!provider.canAddHabit) {
+      ProUpgradeDialog.showHabitLimitDialog(context);
+      return;
+    }
+
     final titleController = TextEditingController();
     final descController = TextEditingController();
     String category = 'General';

@@ -368,6 +368,12 @@ class _CareerRoadmapScreenState extends State<CareerRoadmapScreen> {
 
   /// Add Milestone Node Dialog matching Image 3 UI
   void _showAddMilestoneNodeDialog(BuildContext context) {
+    final provider = Provider.of<AppProvider>(context, listen: false);
+    if (!provider.user.isPremium) {
+      ProUpgradeDialog.showFeatureLockedDialog(context, AppFeature.careerRoadmap);
+      return;
+    }
+
     final titleCtrl = TextEditingController();
     final descCtrl = TextEditingController();
     DateTime? selectedCompletionDate;
