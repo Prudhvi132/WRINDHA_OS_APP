@@ -380,6 +380,16 @@ class _NotesScreenState extends State<NotesScreen> {
 
   // --- ENTRY EDITOR MODAL ---
   void _showEntryEditor(BuildContext context, JournalEntry? existing) {
+    final provider = Provider.of<AppProvider>(context, listen: false);
+    if (!provider.user.isPremium) {
+      ProUpgradeDialog.show(
+        context,
+        featureName: 'Journal & Notes',
+        description: 'Upgrade to Pro for ₹49/month to write, edit, and securely store unlimited personal notes and diary reflections in the cloud.',
+      );
+      return;
+    }
+
     final titleCtrl = TextEditingController(text: existing?.title ?? '');
     final contentCtrl = TextEditingController(text: existing?.content ?? '');
     String mood = existing?.mood ?? 'Productive';
