@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../theme/app_theme.dart';
 
+import '../config/subscription_config.dart';
+import '../widgets/pro_upgrade_dialog.dart';
 import '../models/models.dart';
 
 class AddExpenseScreen extends StatefulWidget {
@@ -38,6 +40,10 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   }
 
   void _handleSave(AppProvider provider) {
+    if (!provider.hasAccess(AppFeature.expenseTracker)) {
+      ProUpgradeDialog.showFeatureLockedDialog(context, AppFeature.expenseTracker);
+      return;
+    }
     if (_isSaving) return; // Prevent duplicate submissions
 
     final amountText = _amountCtrl.text.trim();

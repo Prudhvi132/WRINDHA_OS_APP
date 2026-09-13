@@ -221,6 +221,10 @@ class _ExpenseTrackerScreenState extends State<ExpenseTrackerScreen> {
           IconButton(
             icon: Icon(Icons.add_rounded, color: primaryColor, size: 28),
             onPressed: () {
+              if (!provider.hasAccess(AppFeature.expenseTracker)) {
+                ProUpgradeDialog.showFeatureLockedDialog(context, AppFeature.expenseTracker);
+                return;
+              }
               Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => const AddExpenseScreen()),
@@ -234,6 +238,11 @@ class _ExpenseTrackerScreenState extends State<ExpenseTrackerScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (!provider.hasAccess(AppFeature.expenseTracker))
+              const PremiumLockBanner(
+                featureName: 'Expense & Student Budget Tracker',
+                description: 'Expense Tracker is exclusively for WrindhaOS Pro subscribers. Upgrade for ₹49/month to track daily spending, personal budgets, and financial health.',
+              ),
             // 1. View Mode Selector [ Week ] [ Month ]
             Container(
               padding: const EdgeInsets.all(4),
