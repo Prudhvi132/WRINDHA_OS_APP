@@ -145,15 +145,15 @@ class AppProvider extends ChangeNotifier {
   Future<void> logout() async {
     _isLoggedIn = false;
     _user = UserProfile(
-      id: 'u_guest',
-      name: 'Guest User',
+      id: 'u_unauthenticated',
+      name: 'Unauthenticated User',
       contact: '',
       focusScore: 0,
       activeStreak: 0,
       isPremium: false,
       subscriptionPlan: 'FREE',
     );
-    _subscription = UserSubscription.defaultFree('u_guest');
+    _subscription = UserSubscription.defaultFree('u_unauthenticated');
     await ApiService.clearSession();
     await AuthApiService.clearSession();
     try {
