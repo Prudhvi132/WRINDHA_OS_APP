@@ -1241,6 +1241,7 @@ class ApiService {
       return {'statusCode': response.statusCode, 'data': jsonDecode(response.body)};
     } catch (e) {
       return {'statusCode': 500, 'data': {'error': e.toString()}};
+<<<<<<< HEAD
     }
   }
 

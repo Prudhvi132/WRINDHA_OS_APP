@@ -141,7 +141,7 @@ class DatabaseManager {
     // Merge Supabase Auth metadata (passwordHash) if user or password_hash is missing
     if (isSupabaseConfigured() && supabase) {
       try {
-        const { data } = await supabase.auth.admin.listUsers();
+        const { data } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
         const supUser = (data?.users || []).find(u =>
           (u.email || '').toLowerCase() === clean ||
           (u.user_metadata && (u.user_metadata.username || '').toLowerCase() === clean)
@@ -192,6 +192,40 @@ class DatabaseManager {
       updated_at: new Date().toISOString(),
     };
 
+    // Sync metadata (username and passwordHash) to Supabase Auth user first
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
+        const existingSup = (data?.users || []).find(u => (u.email || '').toLowerCase() === cleanEmail);
+        if (existingSup) {
+          const { error: updateErr } = await supabase.auth.admin.updateUserById(existingSup.id, {
+            user_metadata: {
+              ...(existingSup.user_metadata || {}),
+              username: cleanUsername,
+              name: newUser.name,
+              passwordHash: userData.password_hash || existingSup.user_metadata?.passwordHash,
+            }
+          });
+          if (updateErr) console.warn('[SUPABASE AUTH UPDATE NOTICE]:', updateErr.message);
+        } else {
+          const { error: createErr } = await supabase.auth.admin.createUser({
+            id: userId,
+            email: cleanEmail,
+            password: 'Wrindha_Auth_' + Math.random().toString(36).slice(-8) + '!',
+            email_confirm: true,
+            user_metadata: {
+              username: cleanUsername,
+              name: newUser.name,
+              passwordHash: userData.password_hash,
+            }
+          });
+          if (createErr) console.warn('[SUPABASE AUTH CREATE NOTICE]:', createErr.message);
+        }
+      } catch (supErr) {
+        console.warn('[SUPABASE AUTH USER CREATE NOTICE]:', supErr.message);
+      }
+    }
+
     const createdProfile = await dbQuery('profiles', { method: 'POST', body: newUser, single: true });
     const resultUser = createdProfile || newUser;
 
@@ -200,18 +234,23 @@ class DatabaseManager {
       resultUser.password_hash = userData.password_hash;
     }
 
-    // Initialize Default Subscription Row
-    const newSub = {
-      id: ensureUuid(),
-      user_id: userId,
-      plan: resultUser.is_premium ? 'premium' : 'free',
-      status: 'active',
-      started_at: new Date().toISOString(),
-      payment_provider: resultUser.is_premium ? 'SEED_VIP' : 'NONE',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    await dbQuery('subscriptions', { method: 'POST', body: newSub });
+    // Initialize Default Subscription Row if not present
+    try {
+      const existingSub = await dbQuery('subscriptions', { method: 'GET', match: { user_id: userId }, single: true });
+      if (!existingSub) {
+        const newSub = {
+          id: ensureUuid(),
+          user_id: userId,
+          plan: resultUser.is_premium ? 'premium' : 'free',
+          status: 'active',
+          started_at: new Date().toISOString(),
+          payment_provider: resultUser.is_premium ? 'SEED_VIP' : 'NONE',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        await dbQuery('subscriptions', { method: 'POST', body: newSub });
+      }
+    } catch (_) {}
 
     return resultUser;
   }
@@ -229,7 +268,25 @@ class DatabaseManager {
     if (updates.is_premium !== undefined) payload.is_premium = !!updates.is_premium;
     if (updates.subscription_plan) payload.subscription_plan = updates.subscription_plan.toUpperCase();
 
-    return await dbQuery('profiles', { method: 'PATCH', match: { id: uid }, body: payload, single: true });
+    const updated = await dbQuery('profiles', { method: 'PATCH', match: { id: uid }, body: payload, single: true });
+
+    // Sync metadata (username and passwordHash) to Supabase Auth user if provided
+    if (isSupabaseConfigured() && supabase && (updates.password_hash || updates.username)) {
+      try {
+        const { data } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
+        const supUser = (data?.users || []).find(u => u.id === uid);
+        if (supUser) {
+          const newMeta = { ...(supUser.user_metadata || {}) };
+          if (updates.password_hash) newMeta.passwordHash = updates.password_hash;
+          if (updates.username) newMeta.username = updates.username.trim().toLowerCase();
+          await supabase.auth.admin.updateUserById(uid, { user_metadata: newMeta });
+        }
+      } catch (supErr) {
+        console.warn('[SUPABASE AUTH USER UPDATE NOTICE]:', supErr.message);
+      }
+    }
+
+    return updated;
   }
 
   static async deleteUser(userId) {

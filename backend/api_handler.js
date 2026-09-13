@@ -12,7 +12,7 @@ async function storeAuthOtp(cleanEmail, otpData) {
 
   if (isSupabaseConfigured() && supabase) {
     try {
-      const { data } = await supabase.auth.admin.listUsers();
+      const { data } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
       const existing = (data?.users || []).find(u => (u.email || '').toLowerCase() === cleanEmail.toLowerCase());
       if (existing) {
         await supabase.auth.admin.updateUserById(existing.id, {
@@ -52,7 +52,7 @@ async function getAuthOtp(cleanEmail) {
 
   if (isSupabaseConfigured() && supabase) {
     try {
-      const { data } = await supabase.auth.admin.listUsers();
+      const { data } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
       const existing = (data?.users || []).find(u => (u.email || '').toLowerCase() === cleanEmail.toLowerCase());
       if (existing && existing.user_metadata && existing.user_metadata.otp) {
         return {
@@ -463,7 +463,7 @@ async function handleApiRequest(req, res) {
     // In Supabase, mark user email as confirmed and provision credentials
     if (isSupabaseConfigured() && supabase) {
       try {
-        const { data } = await supabase.auth.admin.listUsers({ perPage: 1000 });
+        const { data } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
         let supUser = (data?.users || []).find(u => (u.email || '').toLowerCase() === cleanEmail.toLowerCase());
         const targetPass = stored.plainPassword || (stored.passwordHash ? null : 'Wrindha2026!');
         if (supUser) {
@@ -815,6 +815,7 @@ async function handleApiRequest(req, res) {
       subscription: sub,
     });
   }
+
 
 
   // ---------------------------------------------------------------------------
