@@ -38,11 +38,15 @@ android {
             keyPassword = keystoreProperties.getProperty("keyPassword") ?: ""
             storeFile = if (keystoreProperties.getProperty("storeFile") != null) file(keystoreProperties.getProperty("storeFile")) else null
             storePassword = keystoreProperties.getProperty("storePassword") ?: ""
+            enableV1Signing = true
+            enableV2Signing = true
         }
     }
 
     buildTypes {
         release {
+            isMinifyEnabled = false
+            isShrinkResources = false
             signingConfig = if (keystorePropertiesFile.exists()) {
                 signingConfigs.getByName("release")
             } else {
