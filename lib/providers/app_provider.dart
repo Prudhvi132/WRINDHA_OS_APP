@@ -374,17 +374,55 @@ class AppProvider extends ChangeNotifier {
   }
 
   void _updateSubjectProgress(String subjectId) {
-    final items = _studyItems.where((i) => i.subjectId == subjectId).toList();
-    final subIdx = _subjects.indexWhere((s) => s.id == subjectId);
-    if (subIdx != -1) {
-      if (items.isEmpty) {
-        _subjects[subIdx].progress = 0.0;
-      } else {
-        final completed = items.where((i) => i.isCompleted).length;
-        _subjects[subIdx].progress = completed / items.length;
-      }
-      _saveSubjects();
+    final subIdx = _subjects.indexWhere(
+        (s) => s.id == subjectId || s.name.toLowerCase() == subjectId.toLowerCase());
+    if (subIdx == -1) return;
+
+    final subject = _subjects[subIdx];
+
+    final units = _studyUnits.where((u) =>
+        u.subjectId == subject.id ||
+        u.subjectId == subject.name ||
+        u.subjectId.toLowerCase() == subject.id.toLowerCase() ||
+        u.subjectId.toLowerCase() == subject.name.toLowerCase()).toList();
+
+    final unitKeys = units.map((u) => u.id.toLowerCase()).toSet()
+      ..addAll(units.map((u) => u.title.toLowerCase()));
+
+    final topics = _studyTopics.where((t) =>
+        unitKeys.contains(t.unitId.toLowerCase()) ||
+        (t.subjectId.isNotEmpty &&
+            (t.subjectId == subject.id ||
+                t.subjectId.toLowerCase() == subject.name.toLowerCase()))).toList();
+
+    final items = _studyItems.where((i) =>
+        i.subjectId == subject.id ||
+        i.subjectId == subject.name ||
+        i.subjectId.toLowerCase() == subject.id.toLowerCase() ||
+        i.subjectId.toLowerCase() == subject.name.toLowerCase()).toList();
+
+    int totalCount = 0;
+    int completedCount = 0;
+
+    if (topics.isNotEmpty) {
+      totalCount += topics.length;
+      completedCount += topics.where((t) => t.isCompleted).length;
+    } else if (units.isNotEmpty) {
+      totalCount += units.length;
+      completedCount += units.where((u) => u.isCompleted || u.progress >= 1.0).length;
     }
+
+    if (items.isNotEmpty) {
+      totalCount += items.length;
+      completedCount += items.where((i) => i.isCompleted).length;
+    }
+
+    if (totalCount == 0) {
+      subject.progress = 0.0;
+    } else {
+      subject.progress = (completedCount / totalCount).clamp(0.0, 1.0);
+    }
+    _saveSubjects();
   }
 
   // UNITS & TOPICS
@@ -403,6 +441,7 @@ class AppProvider extends ChangeNotifier {
   void addStudyUnit(StudyUnit unit) {
     _studyUnits.add(unit);
     _saveStudyUnits();
+    _updateSubjectProgress(unit.subjectId);
     notifyListeners();
     ApiService.createStudyUnitOnBackend(unit);
   }
@@ -413,6 +452,7 @@ class AppProvider extends ChangeNotifier {
       _studyUnits[idx].title = title;
       _studyUnits[idx].description = description;
       _saveStudyUnits();
+      _updateSubjectProgress(_studyUnits[idx].subjectId);
       notifyListeners();
       ApiService.createStudyUnitOnBackend(_studyUnits[idx]);
     }
@@ -423,22 +463,29 @@ class AppProvider extends ChangeNotifier {
     if (idx != -1) {
       _studyUnits[idx].progress = 1.0;
       _studyUnits[idx].isCompleted = true;
-      for (var t in _studyTopics.where((t) => t.unitId == unitId)) {
+      for (var t in _studyTopics.where((t) => t.unitId == unitId || t.unitId == _studyUnits[idx].title)) {
         t.isCompleted = true;
         ApiService.toggleStudyTopicOnBackend(t.id);
       }
       _saveStudyUnits();
       _saveStudyTopics();
+      _updateSubjectProgress(_studyUnits[idx].subjectId);
       notifyListeners();
       ApiService.createStudyUnitOnBackend(_studyUnits[idx]);
     }
   }
 
   void deleteStudyUnit(String unitId) {
+    final idx = _studyUnits.indexWhere((u) => u.id == unitId);
+    String subId = '';
+    if (idx != -1) {
+      subId = _studyUnits[idx].subjectId;
+    }
     _studyUnits.removeWhere((u) => u.id == unitId);
     _studyTopics.removeWhere((t) => t.unitId == unitId);
     _saveStudyUnits();
     _saveStudyTopics();
+    if (subId.isNotEmpty) _updateSubjectProgress(subId);
     notifyListeners();
     ApiService.deleteStudyUnitOnBackend(unitId);
   }
@@ -456,6 +503,7 @@ class AppProvider extends ChangeNotifier {
     if (idx != -1) {
       _studyTopics[idx].title = title;
       _saveStudyTopics();
+      _updateUnitProgress(_studyTopics[idx].unitId);
       notifyListeners();
       ApiService.createStudyTopicOnBackend(_studyTopics[idx]);
     }
@@ -485,18 +533,25 @@ class AppProvider extends ChangeNotifier {
   }
 
   void _updateUnitProgress(String unitId) {
-    final unitIdx = _studyUnits.indexWhere((u) => u.id == unitId);
+    final unitIdx = _studyUnits.indexWhere(
+        (u) => u.id == unitId || u.title.toLowerCase() == unitId.toLowerCase());
     if (unitIdx != -1) {
-      final topics = _studyTopics.where((t) => t.unitId == unitId).toList();
+      final unit = _studyUnits[unitIdx];
+      final topics = _studyTopics.where((t) =>
+          t.unitId == unit.id ||
+          t.unitId == unit.title ||
+          t.unitId.toLowerCase() == unit.id.toLowerCase() ||
+          t.unitId.toLowerCase() == unit.title.toLowerCase()).toList();
+
       if (topics.isEmpty) {
-        _studyUnits[unitIdx].progress = 0.0;
-        _studyUnits[unitIdx].isCompleted = false;
+        unit.progress = unit.isCompleted ? 1.0 : 0.0;
       } else {
         final completed = topics.where((t) => t.isCompleted).length;
-        _studyUnits[unitIdx].progress = completed / topics.length;
-        _studyUnits[unitIdx].isCompleted = completed == topics.length;
+        unit.progress = (completed / topics.length).clamp(0.0, 1.0);
+        unit.isCompleted = completed == topics.length;
       }
       _saveStudyUnits();
+      _updateSubjectProgress(unit.subjectId);
     }
   }
 

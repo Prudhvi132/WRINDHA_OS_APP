@@ -129,6 +129,10 @@ class PersonalGrowthScreen extends StatelessWidget {
               isDark: isDark,
               isLocked: !provider.hasAccess(AppFeature.expenseTracker),
               onTap: () {
+                if (!provider.hasAccess(AppFeature.expenseTracker)) {
+                  ProUpgradeDialog.showFeatureLockedDialog(context, AppFeature.expenseTracker);
+                  return;
+                }
                 Navigator.push(
                   context,
                   MaterialPageRoute(
