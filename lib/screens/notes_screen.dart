@@ -385,6 +385,7 @@ class _NotesScreenState extends State<NotesScreen> {
       ProUpgradeDialog.show(
         context,
         featureName: 'Journal & Notes',
+        title: 'Unlock Journal & Notes Pro',
         description: 'Upgrade to Pro for ₹49/month to write, edit, and securely store unlimited personal notes and diary reflections in the cloud.',
       );
       return;
