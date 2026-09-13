@@ -4,6 +4,7 @@ import '../models/models.dart';
 import '../providers/app_provider.dart';
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_logo.dart';
 import 'forgot_password_screen.dart';
 import 'signup_screen.dart';
 import 'email_otp_screen.dart';
@@ -128,47 +129,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 12),
 
                 // App Brand Logo Header
-                Center(
-                  child: Container(
-                    width: 90,
-                    height: 90,
-                    margin: const EdgeInsets.only(bottom: 24),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(22),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(isDark ? 0.35 : 0.12),
-                          blurRadius: 18,
-                          offset: const Offset(0, 8),
-                        ),
-                      ],
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(22),
-                      child: Image.asset(
-                        'assets/images/wrindha_logo.png',
-                        width: 90,
-                        height: 90,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) => Container(
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF060B1E),
-                            borderRadius: BorderRadius.circular(22),
-                          ),
-                          child: const Center(
-                            child: Text(
-                              'W',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w900,
-                                fontSize: 40,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
+                const Center(
+                  child: AppLogoWidget(size: 90),
                 ),
 
                 // Screen Header

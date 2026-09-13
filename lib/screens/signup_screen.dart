@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_logo.dart';
 import 'login_screen.dart';
 import 'email_otp_screen.dart';
 import 'terms_conditions_screen.dart';
@@ -241,46 +242,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 // App Brand Logo Header
-                Center(
-                  child: Container(
-                    width: 80,
-                    height: 80,
-                    margin: const EdgeInsets.only(bottom: 20),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(20),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(isDark ? 0.35 : 0.12),
-                          blurRadius: 16,
-                          offset: const Offset(0, 6),
-                        ),
-                      ],
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(20),
-                      child: Image.asset(
-                        'assets/images/wrindha_logo.png',
-                        width: 80,
-                        height: 80,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) => Container(
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF060B1E),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: const Center(
-                            child: Text(
-                              'W',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w900,
-                                fontSize: 36,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
+                const Center(
+                  child: AppLogoWidget(
+                    size: 80,
+                    borderRadius: 20,
+                    margin: EdgeInsets.only(bottom: 20),
                   ),
                 ),
                 Text(

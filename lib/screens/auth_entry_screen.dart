@@ -4,6 +4,7 @@ import '../models/models.dart';
 import '../providers/app_provider.dart';
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_logo.dart';
 import 'login_screen.dart';
 import 'signup_screen.dart';
 import 'main_navigation.dart';
@@ -84,46 +85,8 @@ class _AuthEntryScreenState extends State<AuthEntryScreen> {
                   const Spacer(flex: 2),
 
                   // Official Glowing WrindhaOS Logo Badge
-                  Center(
-                    child: Container(
-                      width: 90,
-                      height: 90,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(22),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(isDark ? 0.4 : 0.12),
-                            blurRadius: 20,
-                            offset: const Offset(0, 8),
-                          ),
-                        ],
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(22),
-                        child: Image.asset(
-                          'assets/images/wrindha_logo.png',
-                          width: 90,
-                          height: 90,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) => Container(
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF060B1E),
-                              borderRadius: BorderRadius.circular(22),
-                            ),
-                            child: const Center(
-                              child: Text(
-                                'W',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 40,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
+                  const Center(
+                    child: AppLogoWidget(size: 90),
                   ),
                   const SizedBox(height: 28),
 
