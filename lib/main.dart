@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'providers/app_provider.dart';
@@ -6,26 +7,34 @@ import 'screens/main_navigation.dart';
 import 'screens/auth_entry_screen.dart';
 
 void main() {
-  WidgetsFlutterBinding.ensureInitialized();
-  ErrorWidget.builder = (FlutterErrorDetails details) {
-    return Container(
-      color: const Color(0xFFFFF9F0),
-      alignment: Alignment.center,
-      padding: const EdgeInsets.all(16),
-      child: SingleChildScrollView(
-        child: Text(
-          'Rendering notice: ${details.exceptionAsString()}',
-          style: const TextStyle(color: Color(0xFF1E293B), fontSize: 12),
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    FlutterError.onError = (FlutterErrorDetails details) {
+      FlutterError.presentError(details);
+      debugPrint('[FlutterError] ${details.exception}');
+    };
+    ErrorWidget.builder = (FlutterErrorDetails details) {
+      return Container(
+        color: const Color(0xFFFFF9F0),
+        alignment: Alignment.center,
+        padding: const EdgeInsets.all(16),
+        child: SingleChildScrollView(
+          child: Text(
+            'Notice: ${details.exceptionAsString()}',
+            style: const TextStyle(color: Color(0xFF1E293B), fontSize: 12),
+          ),
         ),
+      );
+    };
+    runApp(
+      ChangeNotifierProvider(
+        create: (_) => AppProvider(),
+        child: const ProductivityApp(),
       ),
     );
-  };
-  runApp(
-    ChangeNotifierProvider(
-      create: (_) => AppProvider(),
-      child: const ProductivityApp(),
-    ),
-  );
+  }, (error, stack) {
+    debugPrint('[Uncaught Exception] $error\n$stack');
+  });
 }
 
 class ProductivityApp extends StatelessWidget {
