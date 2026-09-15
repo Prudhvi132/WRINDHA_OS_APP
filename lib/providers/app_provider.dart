@@ -6,6 +6,7 @@ import '../models/models.dart';
 import '../services/api_service.dart';
 import '../services/auth_api_service.dart';
 import '../services/feature_access_service.dart';
+import '../services/billing_service.dart';
 
 class AppProvider extends ChangeNotifier {
   ThemeMode _themeMode = ThemeMode.light;
@@ -15,6 +16,21 @@ class AppProvider extends ChangeNotifier {
   AppProvider() {
     loadThemePreference();
     _initData();
+    _initBillingService();
+  }
+
+  void _initBillingService() {
+    BillingService.instance.initialize(
+      onVerified: (purchaseDetails) async {
+        // Upgrade user entitlement to PRO on verified purchase
+        updateSubscriptionPlan(SubscriptionPlanType.pro);
+        await ApiService.updateUserProfileOnBackend({
+          'is_premium': true,
+          'subscription_plan': 'PRO',
+          'purchase_token': purchaseDetails.verificationData.serverVerificationData,
+        });
+      },
+    );
   }
 
   void toggleTheme([bool? isDark]) {
