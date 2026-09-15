@@ -62,12 +62,15 @@ class _LoginScreenState extends State<LoginScreen> {
       if (userMap != null) {
         final provider = Provider.of<AppProvider>(context, listen: false);
         provider.setUser(UserProfile(
-          id: userMap['id'] ?? 'u_1',
-          name: userMap['name'] ?? username,
-          contact: userMap['email'] ?? userMap['username'] ?? '',
+          id: userMap['id']?.toString() ?? 'u_1',
+          name: userMap['name'] ?? userMap['display_name'] ?? username,
+          contact: userMap['email'] ?? userMap['contact'] ?? username,
+          email: userMap['email'] ?? (username.contains('@') ? username : ''),
+          username: userMap['username'] ?? (username.contains('@') ? username.split('@')[0] : username),
           focusScore: userMap['focusScore'] ?? 85,
           activeStreak: userMap['activeStreak'] ?? 1,
           isPremium: userMap['isPremium'] ?? false,
+          subscriptionPlan: userMap['subscriptionPlan'] ?? (userMap['isPremium'] == true ? 'PRO' : 'FREE'),
           referralCode: userMap['referralCode'] ?? 'WRINDHA2026',
           token: token,
         ));

@@ -290,6 +290,31 @@ class ApiService {
 
     // 2. Direct Supabase Auth Fallback
     try {
+      String targetEmail = clean;
+
+      // If user provided a username instead of an email address, resolve their registered email first
+      if (!clean.contains('@')) {
+        try {
+          final lookupRes = await http
+              .get(
+                Uri.parse('$supabaseUrl/rest/v1/profiles?username=eq.${Uri.encodeComponent(clean)}&select=email'),
+                headers: {'apikey': supabaseAnonKey},
+              )
+              .timeout(const Duration(seconds: 3));
+
+          if (lookupRes.statusCode == 200) {
+            final List list = jsonDecode(lookupRes.body);
+            if (list.isNotEmpty && list.first['email'] != null && list.first['email'].toString().isNotEmpty) {
+              targetEmail = list.first['email'].toString();
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (!targetEmail.contains('@')) {
+        targetEmail = '$clean@wrindhaos.in';
+      }
+
       final authRes = await http
           .post(
             Uri.parse('$supabaseUrl/auth/v1/token?grant_type=password'),
@@ -298,7 +323,7 @@ class ApiService {
               'Content-Type': 'application/json',
             },
             body: jsonEncode({
-              'email': clean.contains('@') ? clean : '$clean@wrindhaos.in',
+              'email': targetEmail,
               'password': password,
             }),
           )
@@ -313,8 +338,9 @@ class ApiService {
           'id': authUser['id'] ?? 'u_${DateTime.now().millisecondsSinceEpoch}',
           'username': clean.split('@')[0],
           'name': authUser['user_metadata']?['name'] ?? clean.split('@')[0],
-          'email': authUser['email'] ?? clean,
-          'isPremium': true,
+          'email': authUser['email'] ?? targetEmail,
+          'isPremium': false,
+          'subscriptionPlan': 'FREE',
           'focusScore': 85,
           'activeStreak': 1,
           'referralCode': 'WRINDHA2026',
@@ -323,7 +349,7 @@ class ApiService {
         try {
           final profileRes = await http
               .get(
-                Uri.parse('$supabaseUrl/rest/v1/profiles?email=eq.${Uri.encodeComponent(clean)}&select=*'),
+                Uri.parse('$supabaseUrl/rest/v1/profiles?email=eq.${Uri.encodeComponent(targetEmail)}&select=*'),
                 headers: {
                   'apikey': supabaseAnonKey,
                   'Authorization': 'Bearer $accessToken',
@@ -338,7 +364,8 @@ class ApiService {
               userMap['id'] = p['id'] ?? userMap['id'];
               userMap['name'] = p['name'] ?? p['display_name'] ?? userMap['name'];
               userMap['username'] = p['username'] ?? userMap['username'];
-              userMap['isPremium'] = p['is_premium'] ?? true;
+              userMap['isPremium'] = p['is_premium'] ?? false;
+              userMap['subscriptionPlan'] = p['subscription_plan'] ?? (p['is_premium'] == true ? 'PRO' : 'FREE');
               userMap['referralCode'] = p['referral_code'] ?? userMap['referralCode'];
             }
           }
