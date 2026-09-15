@@ -432,7 +432,7 @@ class _ProPlansScreenState extends State<ProPlansScreen> {
                                   ],
                                 )
                               : Text(
-                                  isPro ? 'You are on WrindhaOS Pro 🎉' : 'Upgrade via Google Play ($displayPrice)',
+                                  isPro ? 'You are on WrindhaOS Pro 🎉' : 'Upgrade to Pro',
                                   style: const TextStyle(
                                     fontSize: 15,
                                     fontWeight: FontWeight.w800,
