@@ -275,7 +275,15 @@ class _PasswordResetOtpScreenState extends State<PasswordResetOtpScreen> {
                         ),
                       ),
                       onChanged: (val) {
-                        if (val.isNotEmpty && index < 5) {
+                        if (val.length > 1) {
+                          // Handle multi-digit paste into single field
+                          final digits = val.replaceAll(RegExp(r'\D'), '');
+                          for (int i = 0; i < digits.length && (index + i) < 6; i++) {
+                            _otpControllers[index + i].text = digits[i];
+                          }
+                          final nextFocus = (index + digits.length).clamp(0, 5);
+                          _otpFocusNodes[nextFocus].requestFocus();
+                        } else if (val.isNotEmpty && index < 5) {
                           _otpFocusNodes[index + 1].requestFocus();
                         } else if (val.isEmpty && index > 0) {
                           _otpFocusNodes[index - 1].requestFocus();
