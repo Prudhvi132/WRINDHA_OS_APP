@@ -416,27 +416,19 @@ async function handleApiRequest(req, res) {
     let stored = await getAuthOtp(cleanEmail);
 
     if (!stored) {
-      // Resilient fallback: If user enters a valid 6-digit code received via MSG91 email
-      if (cleanOtp && cleanOtp.length === 6) {
-        stored = {
-          otp: cleanOtp,
-          username: username ? username.trim().toLowerCase() : cleanEmail.split('@')[0],
-          passwordHash: hashPassword('Wrindha2026!'),
-          referralCode: null,
-          expiresAt: Date.now() + 10 * 60 * 1000,
-        };
-      } else {
-        return sendJSON(res, 400, { success: false, message: 'Invalid or expired OTP session. Please click "Send OTP" to receive a verification code.' });
-      }
+      return sendJSON(res, 400, {
+        success: false,
+        message: 'Invalid or expired OTP session. Please click "Resend Code" to receive a new verification code.',
+      });
     }
 
     if (Date.now() > stored.expiresAt) {
       delete localAuthOtps[cleanEmail];
-      return sendJSON(res, 400, { success: false, message: 'OTP has expired. Please request a new one.' });
+      return sendJSON(res, 400, { success: false, message: 'OTP has expired. Please request a new code.' });
     }
 
-    if (stored.otp !== cleanOtp && cleanOtp !== '123456' && cleanOtp !== 'wrindha2026') {
-      return sendJSON(res, 400, { success: false, message: 'Incorrect OTP. Please enter the valid 6-digit code.' });
+    if (stored.otp !== cleanOtp) {
+      return sendJSON(res, 400, { success: false, message: 'Incorrect OTP. Please enter the valid 6-digit code sent to your email.' });
     }
 
     let existingUser = await DatabaseManager.getUserByEmailOrUsername(cleanEmail);
@@ -584,7 +576,7 @@ async function handleApiRequest(req, res) {
       }
     }
 
-    if (!valid && password !== 'Admin123!' && password !== 'wrindha2026') {
+    if (!valid) {
       return sendJSON(res, 401, { success: false, message: 'Invalid password. Please try again.' });
     }
 
@@ -678,24 +670,16 @@ async function handleApiRequest(req, res) {
     const stored = await getAuthOtp(cleanEmail);
 
     if (!stored) {
-      if (cleanOtp === '123456' || cleanOtp.length === 6) {
-        const resetToken = generateJwtToken({ email: cleanEmail, purpose: 'password_reset' }, 60);
-        return sendJSON(res, 200, {
-          success: true,
-          message: 'OTP verified successfully.',
-          resetToken,
-        });
-      }
       return sendJSON(res, 400, { success: false, message: 'Invalid or expired OTP session. Please request a new code.' });
     }
 
     if (Date.now() > stored.expiresAt) {
       delete localAuthOtps[cleanEmail];
-      return sendJSON(res, 400, { success: false, message: 'OTP has expired. Please request a new one.' });
+      return sendJSON(res, 400, { success: false, message: 'OTP has expired. Please request a new code.' });
     }
 
-    if (stored.otp !== cleanOtp && cleanOtp !== '123456') {
-      return sendJSON(res, 400, { success: false, message: 'Incorrect OTP. Please enter the valid 6-digit code.' });
+    if (stored.otp !== cleanOtp) {
+      return sendJSON(res, 400, { success: false, message: 'Incorrect OTP. Please enter the valid 6-digit code sent to your email.' });
     }
 
     delete localAuthOtps[cleanEmail];
