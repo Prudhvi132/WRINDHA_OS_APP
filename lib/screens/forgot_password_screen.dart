@@ -39,25 +39,30 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     if (!mounted) return;
     setState(() => _isLoading = false);
 
-    // Generic confirmation message for security
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          res['message'] ??
-              'If an account exists with this email, a verification code has been sent.',
+    if (res['success'] == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            res['message'] ??
+                'A verification code has been sent to your registered email.',
+          ),
+          backgroundColor: const Color(0xFF10B981),
         ),
-        backgroundColor: const Color(0xFF10B981),
-      ),
-    );
+      );
 
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => PasswordResetOtpScreen(
-          email: email,
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PasswordResetOtpScreen(
+            email: email,
+          ),
         ),
-      ),
-    );
+      );
+    } else {
+      setState(() {
+        _errorMessage = res['message'] ?? 'Failed to initiate password reset. Please try again.';
+      });
+    }
   }
 
   @override
@@ -195,34 +200,38 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
               const SizedBox(height: 32),
 
               // Continue Button
-              SizedBox(
-                height: 52,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: primaryColor,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
+              Semantics(
+                button: true,
+                label: 'Send password reset verification code',
+                child: SizedBox(
+                  height: 52,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: primaryColor,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
                     ),
+                    onPressed: _isLoading ? null : _handleContinue,
+                    child: _isLoading
+                        ? const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                            ),
+                          )
+                        : const Text(
+                            'Continue',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
                   ),
-                  onPressed: _isLoading ? null : _handleContinue,
-                  child: _isLoading
-                      ? const SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2.5,
-                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                          ),
-                        )
-                      : const Text(
-                          'Continue',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
                 ),
               ),
             ],

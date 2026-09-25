@@ -159,17 +159,22 @@ class Habit {
       };
 
   factory Habit.fromJson(Map<String, dynamic> json) {
-    final history = (json['completionHistory'] as List<dynamic>?)
+    final historyRaw = json['completionHistory'] ?? json['completion_history'] ?? json['history'];
+    final history = (historyRaw as List<dynamic>?)
             ?.map((e) => e.toString())
             .toList() ??
         [];
-    final days = (json['selectedDays'] as List<dynamic>?)
+    final daysRaw = json['selectedDays'] ?? json['selected_days'] ?? json['days'];
+    final days = (daysRaw as List<dynamic>?)
             ?.map((e) => int.tryParse(e.toString()) ?? 1)
             .toList() ??
         [];
 
+    final todayStr = '${DateTime.now().year}-${DateTime.now().month.toString().padLeft(2, '0')}-${DateTime.now().day.toString().padLeft(2, '0')}';
+    final isDone = json['isCompleted'] ?? json['is_completed'] ?? history.contains(todayStr);
+
     return Habit(
-      id: json['id'] ?? 'h_1',
+      id: json['id']?.toString() ?? 'h_1',
       title: json['title'] ?? '',
       category: json['category'] ?? 'General',
       frequency: json['frequency'] ?? 'DAILY',
@@ -181,10 +186,10 @@ class Habit {
           ? (int.tryParse(json['colorHex'].toString()) ?? 0xFF10B981)
           : (json['color_hex'] != null ? (int.tryParse(json['color_hex'].toString()) ?? 0xFF10B981) : 0xFF10B981),
       iconName: json['iconName'] ?? json['icon_name'] ?? 'repeat',
-      isCompleted: json['isCompleted'] ?? false,
-      streakDay: json['currentStreak'] ?? json['streakDay'] ?? json['streak'] ?? 0,
-      longestStreak: json['longestStreak'] ?? 0,
-      totalCompletions: json['totalCompletions'] ?? history.length,
+      isCompleted: isDone,
+      streakDay: json['currentStreak'] ?? json['streakDay'] ?? json['streak_day'] ?? json['streak'] ?? 0,
+      longestStreak: json['longestStreak'] ?? json['longest_streak'] ?? 0,
+      totalCompletions: json['totalCompletions'] ?? json['total_completions'] ?? history.length,
       completionHistory: history,
     );
   }
@@ -328,25 +333,26 @@ class CalendarEvent {
         'isCompleted': isCompleted,
       };
 
-  factory CalendarEvent.fromJson(Map<String, dynamic> json) => CalendarEvent(
-        id: json['id']?.toString() ?? generateUuidV4(),
-        title: json['title'] ?? 'Event',
-        description: json['description'] ?? '',
-        startTime: json['startTime'] != null
-            ? (DateTime.tryParse(json['startTime'].toString()) ?? DateTime.now())
-            : (json['start_time'] != null
-                ? (DateTime.tryParse(json['start_time'].toString()) ?? DateTime.now())
-                : DateTime.now()),
-        endTime: json['endTime'] != null
-            ? (DateTime.tryParse(json['endTime'].toString()) ?? DateTime.now().add(const Duration(hours: 1)))
-            : (json['end_time'] != null
-                ? (DateTime.tryParse(json['end_time'].toString()) ?? DateTime.now().add(const Duration(hours: 1)))
-                : DateTime.now().add(const Duration(hours: 1))),
-        location: json['location'] ?? 'Workspace A',
-        type: json['type'] ?? 'Focus Session',
-        category: json['category'] ?? 'General',
-        isCompleted: json['isCompleted'] ?? json['is_completed'] ?? false,
-      );
+  factory CalendarEvent.fromJson(Map<String, dynamic> json) {
+    DateTime parseDate(dynamic val, DateTime defaultVal) {
+      if (val == null) return defaultVal;
+      final parsed = DateTime.tryParse(val.toString());
+      if (parsed == null) return defaultVal;
+      return parsed.isUtc ? parsed.toLocal() : parsed;
+    }
+
+    return CalendarEvent(
+      id: json['id']?.toString() ?? generateUuidV4(),
+      title: json['title'] ?? 'Event',
+      description: json['description'] ?? '',
+      startTime: parseDate(json['startTime'] ?? json['start_time'] ?? json['date'], DateTime.now()),
+      endTime: parseDate(json['endTime'] ?? json['end_time'], DateTime.now().add(const Duration(hours: 1))),
+      location: json['location'] ?? 'Workspace A',
+      type: json['type'] ?? json['event_type'] ?? json['type_name'] ?? 'Focus Session',
+      category: json['category'] ?? json['event_category'] ?? 'General',
+      isCompleted: json['isCompleted'] ?? json['is_completed'] ?? false,
+    );
+  }
 }
 
 class AppNotification {
@@ -503,16 +509,35 @@ class JournalEntry {
         'content': content,
         'content_ciphertext': content,
         'date': date.toIso8601String(),
+        'created_at': date.toIso8601String(),
         'entry_date': date.toIso8601String().split('T')[0],
         'mood': mood,
         'tags': tags,
       };
 
   factory JournalEntry.fromJson(Map<String, dynamic> json) {
-    final rawDate = json['entry_date'] ?? json['date'] ?? json['created_at'];
+    final rawDate = json['created_at'] ?? json['date'] ?? json['entry_date'];
     DateTime parsedDate = DateTime.now();
     if (rawDate != null) {
-      parsedDate = DateTime.tryParse(rawDate.toString()) ?? DateTime.now();
+      final str = rawDate.toString();
+      if (!str.contains('T') && RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(str)) {
+        final alt = json['created_at'] ?? json['updated_at'];
+        if (alt != null && alt.toString().contains('T')) {
+          parsedDate = DateTime.tryParse(alt.toString())?.toLocal() ?? DateTime.now();
+        } else {
+          final d = DateTime.tryParse(str);
+          if (d != null) {
+            final now = DateTime.now();
+            if (d.year == now.year && d.month == now.month && d.day == now.day) {
+              parsedDate = DateTime(d.year, d.month, d.day, now.hour, now.minute, now.second);
+            } else {
+              parsedDate = DateTime(d.year, d.month, d.day, 12, 0);
+            }
+          }
+        }
+      } else {
+        parsedDate = DateTime.tryParse(str)?.toLocal() ?? DateTime.now();
+      }
     }
     final rawId = json['id']?.toString();
     final cleanId = (rawId != null && rawId.isNotEmpty && !rawId.startsWith('j_'))
@@ -962,24 +987,30 @@ class UserProfile {
         'activeDiscountPercent': activeDiscountPercent,
       };
 
-  factory UserProfile.fromJson(Map<String, dynamic> json) => UserProfile(
-        id: json['id'] ?? 'u_1',
-        username: json['username'] ?? (json['name'] ?? 'user').toString().toLowerCase().replaceAll(' ', '_'),
-        email: json['email'] ?? json['contact'] ?? '',
-        name: json['name'] ?? 'Alex Johnson',
-        contact: json['contact'] ?? json['email'] ?? '',
-        isEmailVerified: json['isEmailVerified'] ?? true,
-        focusScore: json['focusScore'] ?? 92,
-        activeStreak: json['activeStreak'] ?? 14,
-        isPremium: json['isPremium'] == true || (json['subscriptionPlan'] ?? '').toString().toUpperCase() == 'PRO',
-        subscriptionPlan: json['subscriptionPlan'] ?? (json['isPremium'] == true ? 'PRO' : 'FREE'),
-        token: json['token'],
-        referralCode: json['referralCode'] ?? 'WRINDHA7K92',
-        referredByCode: json['referredByCode'],
-        successfulReferrals: json['successfulReferrals'] ?? 3,
-        pendingReferrals: json['pendingReferrals'] ?? 1,
-        activeDiscountPercent: json['activeDiscountPercent'] ?? 10,
-      );
+  factory UserProfile.fromJson(Map<String, dynamic> json) {
+    final isPro = json['isPremium'] == true ||
+        json['is_premium'] == true ||
+        (json['subscriptionPlan'] ?? json['subscription_plan'] ?? '').toString().toUpperCase() == 'PRO' ||
+        (json['subscriptionPlan'] ?? json['subscription_plan'] ?? '').toString().toUpperCase() == 'PREMIUM';
+    return UserProfile(
+      id: json['id']?.toString() ?? 'u_1',
+      username: json['username'] ?? (json['name'] ?? 'user').toString().toLowerCase().replaceAll(' ', '_'),
+      email: json['email'] ?? json['contact'] ?? '',
+      name: json['name'] ?? 'Alex Johnson',
+      contact: json['contact'] ?? json['email'] ?? '',
+      isEmailVerified: json['isEmailVerified'] ?? json['is_email_verified'] ?? true,
+      focusScore: json['focusScore'] ?? json['focus_score'] ?? 0,
+      activeStreak: json['activeStreak'] ?? json['active_streak'] ?? 0,
+      isPremium: isPro,
+      subscriptionPlan: isPro ? 'PRO' : 'FREE',
+      token: json['token'],
+      referralCode: json['referralCode'] ?? json['referral_code'] ?? 'WRINDHA7K92',
+      referredByCode: json['referredByCode'] ?? json['referred_by_code'],
+      successfulReferrals: json['successfulReferrals'] ?? json['successful_referrals'] ?? 0,
+      pendingReferrals: json['pendingReferrals'] ?? json['pending_referrals'] ?? 0,
+      activeDiscountPercent: json['activeDiscountPercent'] ?? json['active_discount_percent'] ?? 0,
+    );
+  }
 }
 
 class UserSubscription {

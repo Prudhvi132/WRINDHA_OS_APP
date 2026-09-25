@@ -29,6 +29,7 @@ class _EmailOtpScreenState extends State<EmailOtpScreen> {
   final List<TextEditingController> _otpControllers =
       List.generate(6, (_) => TextEditingController());
   final List<FocusNode> _otpFocusNodes = List.generate(6, (_) => FocusNode());
+  final List<FocusNode> _keyboardFocusNodes = List.generate(6, (_) => FocusNode());
 
   bool _isLoading = false;
   bool _isResending = false;
@@ -54,6 +55,9 @@ class _EmailOtpScreenState extends State<EmailOtpScreen> {
     }
     for (var f in _otpFocusNodes) {
       f.dispose();
+    }
+    for (var k in _keyboardFocusNodes) {
+      k.dispose();
     }
     super.dispose();
   }
@@ -124,16 +128,17 @@ class _EmailOtpScreenState extends State<EmailOtpScreen> {
       final token = res['token'];
       if (userMap != null) {
         final provider = Provider.of<AppProvider>(context, listen: false);
-        provider.setUser(UserProfile(
-          id: userMap['id'] ?? 'u_1',
-          name: userMap['name'] ?? widget.username ?? 'Student',
-          contact: userMap['email'] ?? widget.email,
-          focusScore: userMap['focusScore'] ?? 85,
-          activeStreak: userMap['activeStreak'] ?? 1,
-          isPremium: userMap['isPremium'] ?? false,
-          referralCode: userMap['referralCode'] ?? 'WRINDHA2026',
-          token: token,
-        ));
+        final profile = UserProfile.fromJson(userMap);
+        profile.token = token;
+        if (res['subscription'] != null) {
+          final subMap = res['subscription'];
+          final isProSub = (subMap['isPro'] == true || subMap['isPremium'] == true || (subMap['plan'] ?? '').toString().toLowerCase() == 'pro' || (subMap['plan'] ?? '').toString().toLowerCase() == 'premium');
+          if (isProSub) {
+            profile.isPremium = true;
+            profile.subscriptionPlan = 'PRO';
+          }
+        }
+        provider.setUser(profile);
       }
 
       Navigator.pushAndRemoveUntil(
@@ -289,52 +294,90 @@ class _EmailOtpScreenState extends State<EmailOtpScreen> {
                   return SizedBox(
                     width: 46,
                     height: 56,
-                    child: TextField(
-                      controller: _otpControllers[index],
-                      focusNode: _otpFocusNodes[index],
-                      keyboardType: TextInputType.number,
-                      textAlign: TextAlign.center,
-                      maxLength: 1,
-                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w800,
-                        color: isDark ? Colors.white : AppTheme.lightTextPrimary,
-                      ),
-                      decoration: InputDecoration(
-                        counterText: '',
-                        filled: true,
-                        fillColor: isDark ? const Color(0xFF1E2235) : const Color(0xFFF3F4F6),
-                        contentPadding: EdgeInsets.zero,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide.none,
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(
-                            color: isDark ? const Color(0x262A85FF) : const Color(0xFFE5E7EB),
-                            width: 1.5,
-                          ),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(
-                            color: primaryColor,
-                            width: 2,
-                          ),
-                        ),
-                      ),
-                      onChanged: (val) {
-                        if (val.isNotEmpty && index < 5) {
-                          _otpFocusNodes[index + 1].requestFocus();
-                        } else if (val.isEmpty && index > 0) {
-                          _otpFocusNodes[index - 1].requestFocus();
-                        }
-                        if (_getOtpCode().length == 6) {
-                          _handleVerify();
+                    child: KeyboardListener(
+                      focusNode: _keyboardFocusNodes[index],
+                      onKeyEvent: (KeyEvent event) {
+                        if (event is KeyDownEvent &&
+                            event.logicalKey == LogicalKeyboardKey.backspace) {
+                          if (_otpControllers[index].text.isEmpty && index > 0) {
+                            _otpControllers[index - 1].clear();
+                            _otpFocusNodes[index - 1].requestFocus();
+                          }
                         }
                       },
+                      child: TextField(
+                        controller: _otpControllers[index],
+                        focusNode: _otpFocusNodes[index],
+                        keyboardType: TextInputType.number,
+                        textAlign: TextAlign.center,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                          LengthLimitingTextInputFormatter(6),
+                        ],
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                          color: isDark ? Colors.white : AppTheme.lightTextPrimary,
+                        ),
+                        decoration: InputDecoration(
+                          counterText: '',
+                          filled: true,
+                          fillColor: isDark ? const Color(0xFF1E2235) : const Color(0xFFF3F4F6),
+                          contentPadding: EdgeInsets.zero,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide.none,
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(
+                              color: isDark ? const Color(0x262A85FF) : const Color(0xFFE5E7EB),
+                              width: 1.5,
+                            ),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(
+                              color: primaryColor,
+                              width: 2,
+                            ),
+                          ),
+                        ),
+                        onChanged: (val) {
+                          final cleanDigits = val.replaceAll(RegExp(r'\D'), '');
+
+                          // Multi-digit paste or SMS auto-fill
+                          if (cleanDigits.length >= 6) {
+                            for (int i = 0; i < 6; i++) {
+                              _otpControllers[i].text = cleanDigits[i];
+                            }
+                            _otpFocusNodes[5].requestFocus();
+                            if (_getOtpCode().length == 6) {
+                              _handleVerify();
+                            }
+                            return;
+                          }
+
+                          // Single digit overtyping on an existing digit
+                          if (cleanDigits.length > 1) {
+                            final lastChar = cleanDigits.substring(cleanDigits.length - 1);
+                            _otpControllers[index].value = TextEditingValue(
+                              text: lastChar,
+                              selection: TextSelection.collapsed(offset: 1),
+                            );
+                          }
+
+                          if (val.isNotEmpty && index < 5) {
+                            _otpFocusNodes[index + 1].requestFocus();
+                          } else if (val.isEmpty && index > 0) {
+                            _otpFocusNodes[index - 1].requestFocus();
+                          }
+
+                          if (_getOtpCode().length == 6) {
+                            _handleVerify();
+                          }
+                        },
+                      ),
                     ),
                   );
                 }),

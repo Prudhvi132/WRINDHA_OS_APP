@@ -22,22 +22,26 @@ class _PriorityMatrixScreenState extends State<PriorityMatrixScreen> {
   List<Map<String, dynamic>> _completedTasks = [];
   bool _sortByUrgentTime = false;
 
-  TimeOfDay _parseTimeOfDay(String? timeStr) {
-    if (timeStr == null || timeStr.isEmpty) return const TimeOfDay(hour: 18, minute: 0);
-    try {
-      final parts = timeStr.trim().split(' ');
-      final timeParts = parts[0].split(':');
-      int hour = int.parse(timeParts[0]);
-      final minute = int.parse(timeParts[1]);
-      if (parts.length > 1 && parts[1].toUpperCase() == 'PM' && hour < 12) {
-        hour += 12;
-      } else if (parts.length > 1 && parts[1].toUpperCase() == 'AM' && hour == 12) {
-        hour = 0;
-      }
-      return TimeOfDay(hour: hour, minute: minute);
-    } catch (_) {
-      return const TimeOfDay(hour: 18, minute: 0);
+  TimeOfDay _parseTimeOfDay(String? timeStr, [DateTime? fallbackDate]) {
+    if (timeStr != null && timeStr.trim().isNotEmpty) {
+      try {
+        final str = timeStr.trim();
+        final parts = str.split(' ');
+        final timeParts = parts[0].split(':');
+        int hour = int.parse(timeParts[0]);
+        final minute = int.parse(timeParts[1]);
+        if (parts.length > 1 && parts[1].toUpperCase() == 'PM' && hour < 12) {
+          hour += 12;
+        } else if (parts.length > 1 && parts[1].toUpperCase() == 'AM' && hour == 12) {
+          hour = 0;
+        }
+        return TimeOfDay(hour: hour, minute: minute);
+      } catch (_) {}
     }
+    if (fallbackDate != null) {
+      return TimeOfDay(hour: fallbackDate.hour, minute: fallbackDate.minute);
+    }
+    return const TimeOfDay(hour: 18, minute: 0);
   }
 
   @override
@@ -52,7 +56,7 @@ class _PriorityMatrixScreenState extends State<PriorityMatrixScreen> {
               'title': t.title,
               'tag': t.category,
               'dueDate': t.dueDate,
-              'dueTime': _parseTimeOfDay(t.dueTime),
+              'dueTime': _parseTimeOfDay(t.dueTime, t.dueDate),
               'priority': t.priority,
             })
         .toList();
@@ -64,7 +68,7 @@ class _PriorityMatrixScreenState extends State<PriorityMatrixScreen> {
               'title': t.title,
               'tag': t.category,
               'dueDate': t.dueDate,
-              'dueTime': _parseTimeOfDay(t.dueTime),
+              'dueTime': _parseTimeOfDay(t.dueTime, t.dueDate),
               'priority': t.priority,
             })
         .toList();
@@ -76,7 +80,7 @@ class _PriorityMatrixScreenState extends State<PriorityMatrixScreen> {
               'title': t.title,
               'tag': t.category,
               'dueDate': t.dueDate,
-              'dueTime': _parseTimeOfDay(t.dueTime),
+              'dueTime': _parseTimeOfDay(t.dueTime, t.dueDate),
               'priority': t.priority,
             })
         .toList();
@@ -88,7 +92,7 @@ class _PriorityMatrixScreenState extends State<PriorityMatrixScreen> {
               'title': t.title,
               'tag': t.category,
               'dueDate': t.dueDate,
-              'dueTime': _parseTimeOfDay(t.dueTime),
+              'dueTime': _parseTimeOfDay(t.dueTime, t.dueDate),
               'priority': t.priority,
             })
         .toList();
@@ -787,35 +791,42 @@ class _PriorityMatrixScreenState extends State<PriorityMatrixScreen> {
                       ],
                     ),
                     const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        const Icon(Icons.access_alarm_rounded, size: 14, color: Color(0xFF6366F1)),
-                        const SizedBox(width: 5),
-                        Text(
-                          'Deadline: $dateLabel at $timeStr',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: isDark ? Colors.white70 : const Color(0xFF475569),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: urgencyColor.withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            urgencyBadge,
-                            style: TextStyle(
-                              fontSize: 9.5,
-                              fontWeight: FontWeight.bold,
-                              color: urgencyColor,
+                    InkWell(
+                      onTap: () => _showEditTaskDialog(context, task, priorityLevel),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2.0),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.access_alarm_rounded, size: 14, color: Color(0xFF6366F1)),
+                            const SizedBox(width: 5),
+                            Text(
+                              'Deadline: $dateLabel at $timeStr',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: isDark ? Colors.white70 : const Color(0xFF475569),
+                              ),
                             ),
-                          ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: urgencyColor.withOpacity(0.12),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                urgencyBadge,
+                                style: TextStyle(
+                                  fontSize: 9.5,
+                                  fontWeight: FontWeight.bold,
+                                  color: urgencyColor,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
                     const SizedBox(height: 8),
                     Row(
@@ -849,6 +860,33 @@ class _PriorityMatrixScreenState extends State<PriorityMatrixScreen> {
                               fontSize: 10,
                               fontWeight: FontWeight.w800,
                               color: Color(0xFF64748B),
+                            ),
+                          ),
+                        ),
+                        const Spacer(),
+                        InkWell(
+                          onTap: () => _showEditTaskDialog(context, task, priorityLevel),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: isDark ? const Color(0xFF2A2B3D) : const Color(0xFFEEF2FF),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: const Color(0xFFC7D2FE)),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.edit_calendar_outlined, size: 13, color: Color(0xFF0D5CE5)),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Reschedule',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF0D5CE5),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),
@@ -1173,17 +1211,31 @@ class _PriorityMatrixScreenState extends State<PriorityMatrixScreen> {
                         ),
                       ),
                       onPressed: () {
-                        if (titleCtrl.text.trim().isNotEmpty) {
-                          provider.addTask(
-                            titleCtrl.text.trim(),
-                            selectedTag,
-                            dateFormatted,
-                            priority: assignedPriority,
-                            dueDate: selectedDate,
-                            dueTime: timeFormatted,
+                        if (titleCtrl.text.trim().isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Please enter a task title before setting deadline.'),
+                              backgroundColor: Colors.redAccent,
+                            ),
                           );
-                          Navigator.pop(ctx);
+                          return;
                         }
+                        final fullDueDate = DateTime(
+                          selectedDate.year,
+                          selectedDate.month,
+                          selectedDate.day,
+                          selectedTime.hour,
+                          selectedTime.minute,
+                        );
+                        provider.addTask(
+                          titleCtrl.text.trim(),
+                          selectedTag,
+                          dateFormatted,
+                          priority: assignedPriority,
+                          dueDate: fullDueDate,
+                          dueTime: timeFormatted,
+                        );
+                        Navigator.pop(ctx);
                       },
                       child: const Text(
                         'Set Deadline & Save Task',
@@ -1381,18 +1433,52 @@ class _PriorityMatrixScreenState extends State<PriorityMatrixScreen> {
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
             ElevatedButton(
               onPressed: () {
-                if (titleCtrl.text.trim().isNotEmpty) {
-                  final p = Provider.of<AppProvider>(context, listen: false);
-                  if (task['id'] != null) {
-                    p.editTask(
-                      task['id'] as String,
-                      titleCtrl.text.trim(),
-                      selectedPriority,
-                      task['tag'] as String? ?? 'STUDY',
-                    );
-                  }
-                  Navigator.pop(ctx);
+                final trimmedTitle = titleCtrl.text.trim();
+                if (trimmedTitle.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Please enter a task title.'),
+                      backgroundColor: Colors.redAccent,
+                    ),
+                  );
+                  return;
                 }
+                final p = Provider.of<AppProvider>(context, listen: false);
+                if (task['id'] != null) {
+                  final now = DateTime.now();
+                  final isToday = selectedDate.year == now.year && selectedDate.month == now.month && selectedDate.day == now.day;
+                  final isTomorrow = selectedDate.year == now.add(const Duration(days: 1)).year &&
+                      selectedDate.month == now.add(const Duration(days: 1)).month &&
+                      selectedDate.day == now.add(const Duration(days: 1)).day;
+
+                  String dateFormatted;
+                  if (isToday) {
+                    dateFormatted = 'Today (${_monthName(selectedDate.month)} ${selectedDate.day})';
+                  } else if (isTomorrow) {
+                    dateFormatted = 'Tomorrow (${_monthName(selectedDate.month)} ${selectedDate.day})';
+                  } else {
+                    dateFormatted = '${_monthName(selectedDate.month)} ${selectedDate.day}, ${selectedDate.year}';
+                  }
+
+                  final fullDueDate = DateTime(
+                    selectedDate.year,
+                    selectedDate.month,
+                    selectedDate.day,
+                    selectedTime.hour,
+                    selectedTime.minute,
+                  );
+
+                  p.editTask(
+                    task['id'] as String,
+                    trimmedTitle,
+                    selectedPriority,
+                    task['tag'] as String? ?? 'STUDY',
+                    dueDate: fullDueDate,
+                    dueTime: _formatTimeOfDay(selectedTime),
+                    dueDateLabel: dateFormatted,
+                  );
+                }
+                Navigator.pop(ctx);
               },
               child: const Text('Save Changes'),
             ),

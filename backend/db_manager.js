@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const { supabase, isConfigured: isSupabaseConfigured } = require('./supabase_client');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://hkeyywopbkmlclsealbz.supabase.co';
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhrZXl5d29wYmttbGNsc2VhbGJ6Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4ODI3MTIxOSwiZXhwIjoyMTAzODQ3MjE5fQ.rAJQONxcr0PgCT-59ZfsjoyojY4-_g5aTaH2zwIntAg';
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || '';
 
 // -----------------------------------------------------------------------------
 // 1. CRYPTOGRAPHIC SECURITY HELPERS & UUID GENERATOR
@@ -111,7 +111,20 @@ async function dbQuery(table, options = {}) {
 // -----------------------------------------------------------------------------
 // 3. UNIFIED DIRECT POSTGRES DATABASE MANAGER
 // -----------------------------------------------------------------------------
+const userPasswordHashMap = {};
+
 class DatabaseManager {
+  static setUserPasswordHash(emailOrUsername, hash) {
+    if (!emailOrUsername || !hash) return;
+    const clean = String(emailOrUsername).trim().toLowerCase();
+    userPasswordHashMap[clean] = hash;
+  }
+
+  static getUserPasswordHash(emailOrUsername) {
+    if (!emailOrUsername) return null;
+    const clean = String(emailOrUsername).trim().toLowerCase();
+    return userPasswordHashMap[clean] || null;
+  }
   // ---------------------------------------------------------------------------
   // AUTHENTICATION & USER PROFILES
   // ---------------------------------------------------------------------------
@@ -141,7 +154,7 @@ class DatabaseManager {
     // Merge Supabase Auth metadata (passwordHash) if user or password_hash is missing
     if (isSupabaseConfigured() && supabase) {
       try {
-        const { data } = await supabase.auth.admin.listUsers();
+        const { data } = await supabase.auth.admin.listUsers({ perPage: 1000 });
         const supUser = (data?.users || []).find(u =>
           (u.email || '').toLowerCase() === clean ||
           (u.user_metadata && (u.user_metadata.username || '').toLowerCase() === clean)
@@ -160,12 +173,18 @@ class DatabaseManager {
             };
           }
           if (supUser.user_metadata && supUser.user_metadata.passwordHash) {
-            user.password_hash = supUser.user_metadata.passwordHash;
+            const h = supUser.user_metadata.passwordHash || supUser.user_metadata.password_hash;
+            user.password_hash = h;
+            DatabaseManager.setUserPasswordHash(clean, h);
           }
         }
       } catch (supErr) {
         console.warn('[SUPABASE AUTH USER FETCH NOTICE]:', supErr.message);
       }
+    }
+    const cachedHash = DatabaseManager.getUserPasswordHash(clean) || (user?.email ? DatabaseManager.getUserPasswordHash(user.email) : null) || (user?.username ? DatabaseManager.getUserPasswordHash(user.username) : null);
+    if (user && cachedHash) {
+      user.password_hash = cachedHash;
     }
     return user;
   }
@@ -192,12 +211,18 @@ class DatabaseManager {
       updated_at: new Date().toISOString(),
     };
 
+    if (userData.password_hash) {
+      newUser.password_hash = userData.password_hash;
+    }
+
     const createdProfile = await dbQuery('profiles', { method: 'POST', body: newUser, single: true });
     const resultUser = createdProfile || newUser;
 
     // Attach password_hash for caller authentication flows
     if (userData.password_hash) {
       resultUser.password_hash = userData.password_hash;
+      DatabaseManager.setUserPasswordHash(cleanEmail, userData.password_hash);
+      DatabaseManager.setUserPasswordHash(cleanUsername, userData.password_hash);
     }
 
     // Initialize Default Subscription Row
@@ -222,19 +247,67 @@ class DatabaseManager {
     const payload = { updated_at: new Date().toISOString() };
 
     if (updates.username) payload.username = updates.username.trim().toLowerCase();
+    if (updates.email) payload.email = updates.email.trim().toLowerCase();
     if (updates.name) payload.name = updates.name;
     if (updates.display_name) payload.display_name = updates.display_name;
     if (updates.focus_score !== undefined) payload.focus_score = updates.focus_score;
     if (updates.active_streak !== undefined) payload.active_streak = updates.active_streak;
     if (updates.is_premium !== undefined) payload.is_premium = !!updates.is_premium;
     if (updates.subscription_plan) payload.subscription_plan = updates.subscription_plan.toUpperCase();
+    if (updates.is_email_verified !== undefined) payload.is_email_verified = !!updates.is_email_verified;
+
+    if (updates.password_hash) {
+      payload.password_hash = updates.password_hash;
+      if (updates.email) DatabaseManager.setUserPasswordHash(updates.email, updates.password_hash);
+      if (updates.username) DatabaseManager.setUserPasswordHash(updates.username, updates.password_hash);
+      const u = await DatabaseManager.getUserById(uid);
+      if (u) {
+        if (u.email) DatabaseManager.setUserPasswordHash(u.email, updates.password_hash);
+        if (u.username) DatabaseManager.setUserPasswordHash(u.username, updates.password_hash);
+      }
+    }
 
     return await dbQuery('profiles', { method: 'PATCH', match: { id: uid }, body: payload, single: true });
+  }
+
+  static async isEmailTombstoned(email) {
+    if (!email) return false;
+    const cleanEmail = email.trim().toLowerCase();
+    try {
+      if (!isSupabaseConfigured() || !supabase) return false;
+      const { data, error } = await supabase.from('deleted_account_tombstones').select('*').eq('email', cleanEmail).maybeSingle();
+      if (error) return false;
+      return !!data;
+
+
+
+
+
+
+    } catch (e) {
+      return false;
+    }
   }
 
   static async deleteUser(userId) {
     if (!userId) return false;
     const uid = ensureUuid(userId);
+    const user = await this.getUserById(uid);
+    if (user && user.email) {
+      const cleanEmail = user.email.trim().toLowerCase();
+      try {
+        await dbQuery('deleted_account_tombstones', {
+          method: 'POST',
+          body: {
+            id: ensureUuid(),
+            email: cleanEmail,
+            deleted_at: new Date().toISOString(),
+          },
+        });
+      } catch (tombErr) {
+        console.warn('[TOMBSTONE STORE NOTICE]:', tombErr.message);
+      }
+    }
     return await dbQuery('profiles', { method: 'DELETE', match: { id: uid } });
   }
 
@@ -904,19 +977,20 @@ class DatabaseManager {
     return await dbQuery('milestones', { method: 'GET', match });
   }
 
-  static async createMilestone(userId, goalId, milestoneData) {
+  static async createMilestone(userId, goalId, milestoneData = {}) {
     if (!userId || !goalId) throw new Error('userId and goalId are required');
     const uid = ensureUuid(userId);
     const gid = ensureUuid(goalId);
+    const data = milestoneData || {};
 
     const newMilestone = {
-      id: ensureUuid(milestoneData.id),
+      id: ensureUuid(data.id),
       user_id: uid,
       goal_id: gid,
-      title: milestoneData.title || milestoneData.milestone_title || 'New Milestone',
-      description: milestoneData.description || null,
-      target_date: milestoneData.target_date || milestoneData.targetDate || null,
-      is_completed: !!(milestoneData.is_completed || milestoneData.isCompleted),
+      title: data.title || data.milestone_title || 'New Milestone',
+      description: data.description || null,
+      target_date: data.target_date || data.targetDate || null,
+      is_completed: !!(data.is_completed || data.isCompleted),
       created_at: new Date().toISOString(),
     };
 
@@ -977,22 +1051,30 @@ class DatabaseManager {
     if ((!entries || entries.length === 0) && user && user.user_id && user.user_id !== uid) {
       entries = await dbQuery('journal_entries', { method: 'GET', match: { user_id: user.user_id } });
     }
-    return (entries || []).map(j => ({
-      ...j,
-      userId: j.user_id,
-      date: j.entry_date || j.date || j.created_at,
-      entry_date: j.entry_date || j.date || j.created_at,
-      content: j.content || j.content_ciphertext || '',
-      content_ciphertext: j.content_ciphertext || j.content || '',
-      mood: j.mood || 'neutral',
-      title: j.title || 'Journal Entry',
-    }));
+    return (entries || []).map(j => {
+      const fullDate = j.created_at || (j.date && j.date.includes('T') ? j.date : null) || (j.entry_date ? `${j.entry_date}T12:00:00.000Z` : new Date().toISOString());
+      return {
+        ...j,
+        userId: j.user_id,
+        date: fullDate,
+        created_at: fullDate,
+        entry_date: j.entry_date || fullDate.split('T')[0],
+        content: j.content || j.content_ciphertext || '',
+        content_ciphertext: j.content_ciphertext || j.content || '',
+        mood: j.mood || 'neutral',
+        title: j.title || 'Journal Entry',
+      };
+    });
   }
 
   static async createJournalEntry(userId, entryData) {
     if (!userId) throw new Error('userId is required');
     const user = await DatabaseManager.getUserById(userId);
     const uid = user ? user.id : ensureUuid(userId);
+
+    const fullDate = (entryData.created_at && entryData.created_at.includes('T'))
+      ? entryData.created_at
+      : ((entryData.date && entryData.date.includes('T')) ? entryData.date : new Date().toISOString());
 
     const newEntry = {
       id: ensureUuid(entryData.id),
@@ -1001,8 +1083,8 @@ class DatabaseManager {
       content: entryData.content || entryData.content_ciphertext || '',
       content_ciphertext: entryData.content_ciphertext || entryData.content || '',
       mood: entryData.mood || 'neutral',
-      entry_date: entryData.entry_date || entryData.date || new Date().toISOString().split('T')[0],
-      created_at: new Date().toISOString(),
+      entry_date: fullDate.split('T')[0],
+      created_at: fullDate,
       updated_at: new Date().toISOString(),
     };
 
@@ -1010,7 +1092,8 @@ class DatabaseManager {
     return {
       ...(created || newEntry),
       userId: uid,
-      date: (created || newEntry).entry_date,
+      date: fullDate,
+      created_at: fullDate,
     };
   }
 
@@ -1060,4 +1143,3 @@ module.exports = {
   verifyPassword,
   ensureUuid,
 };
-

@@ -137,11 +137,7 @@ class PersonalGrowthScreen extends StatelessWidget {
                 );
               },
             ),
-            const SizedBox(height: 14),
-
-
-
-            // 4. Organize Matrix (Pro Only)
+            // 3. Organize Matrix (Pro Only)
             _buildMenuCard(
               context,
               category: 'ORGANIZATION',

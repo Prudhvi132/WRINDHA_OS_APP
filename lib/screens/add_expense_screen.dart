@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../config/subscription_config.dart';
 import '../providers/app_provider.dart';
 import '../theme/app_theme.dart';
+import '../widgets/pro_upgrade_dialog.dart';
 
 import '../models/models.dart';
 
@@ -39,6 +41,11 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
 
   void _handleSave(AppProvider provider) {
     if (_isSaving) return; // Prevent duplicate submissions
+
+    if (!provider.user.isPremium) {
+      ProUpgradeDialog.showFeatureLockedDialog(context, AppFeature.expenseTracker);
+      return;
+    }
 
     final amountText = _amountCtrl.text.trim();
     if (amountText.isEmpty) {
@@ -237,7 +244,6 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                       DropdownMenuItem(value: 'Transport', child: Text('Transport')),
                       DropdownMenuItem(value: 'Education', child: Text('Education')),
                       DropdownMenuItem(value: 'Entertainment', child: Text('Entertainment')),
-                      DropdownMenuItem(value: 'Income', child: Text('Income (Credit)')),
                       DropdownMenuItem(value: 'General', child: Text('General')),
                       DropdownMenuItem(value: 'Others', child: Text('Others')),
                     ],
@@ -364,42 +370,6 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
               ),
             ),
             const SizedBox(height: 20),
-
-            // Live Budget Status Card
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF1E1F2B) : const Color(0xFFDBEAFE),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Current Available Balance',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '₹${provider.availableBalance.toStringAsFixed(2)}',
-                        style: const TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF0D5CE5),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 30),
           ],
         ),
       ),

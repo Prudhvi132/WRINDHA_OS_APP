@@ -2,17 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../config/subscription_config.dart';
 import '../providers/app_provider.dart';
+import '../services/billing_service.dart';
 import '../theme/app_theme.dart';
 
 /// Dedicated WrindhaOS Pro Plans Screen
 /// 
-/// Presents a clear, modern, side-by-side / stacked plan comparison between:
-/// - FREE PLAN: Unlimited To-Do List, Calendar, Up to 2 Habits, Up to 2 Subjects
-/// - PRO PLAN: Everything in Free + Unlimited Habits, Unlimited Subjects, Goal Management,
-///             Priority Matrix, Eisenhower Matrix, Expense Tracker, Notes,
-///             Achieved Milestones, Career Roadmap, Focus Timer, Analytics & Insights
-///
-/// Designed ready for Google Play Billing (in_app_purchase) integration.
+/// Integrated with live Google Play Billing (in_app_purchase)
 class ProPlansScreen extends StatefulWidget {
   const ProPlansScreen({super.key});
 
@@ -22,16 +17,67 @@ class ProPlansScreen extends StatefulWidget {
 
 class _ProPlansScreenState extends State<ProPlansScreen> {
   bool _isProcessing = false;
+  final BillingService _billingService = BillingService();
 
-  /// Placeholder payment handler ready for future Google Play Billing integration
+  @override
+  void initState() {
+    super.initState();
+    _billingService.addListener(_onBillingUpdated);
+    _billingService.initialize(
+      onProStatusChanged: (isPro) {
+        if (isPro && mounted) {
+          final provider = Provider.of<AppProvider>(context, listen: false);
+          provider.upgradeToPremium();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('🎉 WrindhaOS Pro unlocked via Google Play!'),
+              backgroundColor: Color(0xFF10B981),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      },
+    );
+  }
+
+  void _onBillingUpdated() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _billingService.removeListener(_onBillingUpdated);
+    super.dispose();
+  }
+
   void _handleUpgradeToPro(BuildContext context) async {
     setState(() => _isProcessing = true);
 
-    // Simulate connection check / placeholder handler
-    await Future.delayed(const Duration(milliseconds: 500));
+    bool launched = false;
+    try {
+      if (!_billingService.isAvailable || _billingService.proProduct == null) {
+        await _billingService.queryProducts();
+      }
+      launched = await _billingService.buyProSubscription();
+    } catch (e) {
+      launched = false;
+    } finally {
+      if (mounted) {
+        setState(() => _isProcessing = false);
+      }
+    }
 
-    if (!mounted) return;
-    setState(() => _isProcessing = false);
+    if (launched || !mounted) return;
+
+    if (_billingService.errorMessage != null && _billingService.errorMessage!.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_billingService.errorMessage!),
+          backgroundColor: const Color(0xFFE11D48),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
 
     showModalBottomSheet(
       context: context,
@@ -355,20 +401,11 @@ class _ProPlansScreenState extends State<ProPlansScreen> {
                             textBaseline: TextBaseline.alphabetic,
                             children: [
                               Text(
-                                '₹49',
+                                _billingService.formattedPrice,
                                 style: TextStyle(
-                                  fontSize: 32,
+                                  fontSize: 26,
                                   fontWeight: FontWeight.w900,
                                   color: textPrimary,
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                '/ month',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  color: textSecondary,
                                 ),
                               ),
                             ],

@@ -211,6 +211,7 @@ class AppProvider extends ChangeNotifier {
   void addHabit(Habit habit) {
     _habits.add(habit);
     _saveHabits();
+    _recalculateMetrics();
     notifyListeners();
     ApiService.createHabitOnBackend(habit);
   }
@@ -254,6 +255,7 @@ class AppProvider extends ChangeNotifier {
     final idx = _habits.indexWhere((h) => h.id == id);
     if (idx != -1) {
       _habits[idx].status = 'active';
+      _habits[idx].recalculateStreaks(DateTime.now());
       _saveHabits();
       notifyListeners();
       ApiService.updateHabitStatusOnBackend(id, 'active');
@@ -279,6 +281,7 @@ class AppProvider extends ChangeNotifier {
 
       habit.recalculateStreaks(DateTime.now());
       _saveHabits();
+      _recalculateMetrics();
       notifyListeners();
 
       ApiService.toggleHabitCompletionOnBackend(
@@ -292,6 +295,7 @@ class AppProvider extends ChangeNotifier {
   void deleteHabit(String id) {
     _habits.removeWhere((h) => h.id == id);
     _saveHabits();
+    _recalculateMetrics();
     notifyListeners();
     ApiService.deleteHabitOnBackend(id);
   }
@@ -374,14 +378,31 @@ class AppProvider extends ChangeNotifier {
   }
 
   void _updateSubjectProgress(String subjectId) {
-    final items = _studyItems.where((i) => i.subjectId == subjectId).toList();
-    final subIdx = _subjects.indexWhere((s) => s.id == subjectId);
+    final subIdx = _subjects.indexWhere((s) => s.id == subjectId || s.id.toLowerCase() == subjectId.toLowerCase());
     if (subIdx != -1) {
-      if (items.isEmpty) {
-        _subjects[subIdx].progress = 0.0;
+      final sId = _subjects[subIdx].id;
+      final units = _studyUnits.where((u) => u.subjectId == sId || u.subjectId.toLowerCase() == sId.toLowerCase()).toList();
+
+      if (units.isNotEmpty) {
+        final allTopics = _studyTopics.where((t) {
+          return units.any((u) => u.id == t.unitId || u.id.toLowerCase() == t.unitId.toLowerCase());
+        }).toList();
+
+        if (allTopics.isNotEmpty) {
+          final completedTopics = allTopics.where((t) => t.isCompleted).length;
+          _subjects[subIdx].progress = completedTopics / allTopics.length;
+        } else {
+          final totalProg = units.fold<double>(0.0, (sum, u) => sum + u.progress);
+          _subjects[subIdx].progress = totalProg / units.length;
+        }
       } else {
-        final completed = items.where((i) => i.isCompleted).length;
-        _subjects[subIdx].progress = completed / items.length;
+        final items = _studyItems.where((i) => i.subjectId == sId).toList();
+        if (items.isEmpty) {
+          _subjects[subIdx].progress = 0.0;
+        } else {
+          final completed = items.where((i) => i.isCompleted).length;
+          _subjects[subIdx].progress = completed / items.length;
+        }
       }
       _saveSubjects();
     }
@@ -497,6 +518,7 @@ class AppProvider extends ChangeNotifier {
         _studyUnits[unitIdx].isCompleted = completed == topics.length;
       }
       _saveStudyUnits();
+      _updateSubjectProgress(_studyUnits[unitIdx].subjectId);
     }
   }
 
@@ -582,11 +604,9 @@ class AppProvider extends ChangeNotifier {
   Future<void> fetchGoalsFromBackend() async {
     try {
       final remote = await ApiService.fetchGoals();
-      if (remote.isNotEmpty) {
-        _goals = remote;
-        _saveGoals();
-        notifyListeners();
-      }
+      _goals = remote;
+      _saveGoals();
+      notifyListeners();
     } catch (_) {}
   }
 
@@ -740,6 +760,7 @@ class AppProvider extends ChangeNotifier {
     String? email,
     bool isPremium = false,
     String subscriptionPlan = 'FREE',
+    String? referralCode,
   }) {
     _isLoggedIn = true;
     final isPro = isPremium || subscriptionPlan.toUpperCase() == 'PRO' || subscriptionPlan.toUpperCase() == 'PREMIUM';
@@ -754,7 +775,7 @@ class AppProvider extends ChangeNotifier {
       isPremium: isPro,
       subscriptionPlan: isPro ? 'PRO' : 'FREE',
       token: token,
-      referralCode: 'WRINDHA7K92',
+      referralCode: referralCode ?? 'WRINDHA',
       referredByCode: refCode,
     );
     _subscription = UserSubscription(
@@ -840,11 +861,13 @@ class AppProvider extends ChangeNotifier {
     await prefs.setString('saved_session_user', userJson);
     await prefs.setString('wrindha_auth_user', userJson);
     await prefs.setString('wrindha_secure_user_profile', userJson);
-    if (_user.token != null) {
+    if (_user.token != null && _user.token!.isNotEmpty) {
       await prefs.setString('saved_session_token', _user.token!);
       await prefs.setString('wrindha_auth_token', _user.token!);
       await prefs.setString('wrindha_secure_jwt_token', _user.token!);
+      await AuthApiService.saveSessionToken(_user.token!);
     }
+    await AuthApiService.saveCachedUser(_user.toJson());
   }
 
   Future<Map<String, dynamic>> deleteAccount() async {
@@ -994,8 +1017,10 @@ class AppProvider extends ChangeNotifier {
       _monthlyBudget = prefs.getDouble('saved_monthly_budget') ?? 10000.0;
 
       // Restore authenticated session from secure storage
-      final storedToken = await AuthApiService.getSessionToken();
-      final cachedUser = await AuthApiService.getCachedUser();
+      String? storedToken = await AuthApiService.getSessionToken();
+      storedToken ??= await ApiService.getSessionToken();
+      Map<String, dynamic>? cachedUser = await AuthApiService.getCachedUser();
+      cachedUser ??= await ApiService.getSessionUser();
       if (storedToken != null && storedToken.isNotEmpty && cachedUser != null) {
         setAuthenticatedSession(userMap: cachedUser, token: storedToken);
       }
@@ -1097,8 +1122,8 @@ class AppProvider extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     final uid = _user.id;
 
-    // 1. Habits
-    final habitsJson = prefs.getString('saved_habits_$uid') ?? prefs.getString('saved_habits');
+    // 1. Habits (User-Isolated)
+    final habitsJson = prefs.getString('saved_habits_$uid');
     if (habitsJson != null) {
       final List decoded = jsonDecode(habitsJson);
       _habits = decoded.map((item) => Habit.fromJson(item)).toList();
@@ -1106,8 +1131,8 @@ class AppProvider extends ChangeNotifier {
       _habits = [];
     }
 
-    // 2. Tasks
-    final tasksJson = prefs.getString('saved_tasks_$uid') ?? prefs.getString('saved_tasks');
+    // 2. Tasks (User-Isolated)
+    final tasksJson = prefs.getString('saved_tasks_$uid');
     if (tasksJson != null) {
       final List decoded = jsonDecode(tasksJson);
       _tasks = decoded.map((item) => Task.fromJson(item)).toList();
@@ -1115,8 +1140,8 @@ class AppProvider extends ChangeNotifier {
       _tasks = [];
     }
 
-    // 3. Calendar Events
-    final eventsJson = prefs.getString('saved_events_$uid') ?? prefs.getString('saved_events');
+    // 3. Calendar Events (User-Isolated)
+    final eventsJson = prefs.getString('saved_events_$uid');
     if (eventsJson != null) {
       final List decoded = jsonDecode(eventsJson);
       _calendarEvents = decoded.map((item) => CalendarEvent.fromJson(item)).toList();
@@ -1124,8 +1149,8 @@ class AppProvider extends ChangeNotifier {
       _calendarEvents = [];
     }
 
-    // 4. Expenses
-    final expensesJson = prefs.getString('saved_expenses_$uid') ?? prefs.getString('saved_expenses');
+    // 4. Expenses (User-Isolated)
+    final expensesJson = prefs.getString('saved_expenses_$uid');
     if (expensesJson != null) {
       final List decoded = jsonDecode(expensesJson);
       _expenses = decoded.map((item) => ExpenseTransaction.fromJson(item)).toList();
@@ -1201,8 +1226,8 @@ class AppProvider extends ChangeNotifier {
       'Senior Offer Target',
     }.contains(n.title));
 
-    // 8. Notifications
-    final notifsJson = prefs.getString('saved_notifications_$uid') ?? prefs.getString('saved_notifications');
+    // 8. Notifications (User-Isolated)
+    final notifsJson = prefs.getString('saved_notifications_$uid');
     if (notifsJson != null) {
       final List decoded = jsonDecode(notifsJson);
       _notifications = decoded.map((item) => AppNotification.fromJson(item)).toList();
@@ -1232,12 +1257,15 @@ class AppProvider extends ChangeNotifier {
     ApiService.createTaskOnBackend(newTask);
   }
 
-  void editTask(String taskId, String newTitle, int priority, String category) {
+  void editTask(String taskId, String newTitle, int priority, String category, {DateTime? dueDate, String? dueTime, String? dueDateLabel}) {
     final index = _tasks.indexWhere((t) => t.id == taskId);
     if (index != -1) {
       _tasks[index].title = newTitle;
       _tasks[index].priority = priority;
       _tasks[index].category = category;
+      if (dueDate != null) _tasks[index].dueDate = dueDate;
+      if (dueTime != null) _tasks[index].dueTime = dueTime;
+      if (dueDateLabel != null) _tasks[index].dueDateLabel = dueDateLabel;
       _saveTasks();
       notifyListeners();
       ApiService.updateTaskOnBackend(_tasks[index]);
@@ -1380,15 +1408,35 @@ class AppProvider extends ChangeNotifier {
   }
 
   void _recalculateMetrics() {
-    if (_tasks.isEmpty) {
-      _user.focusScore = 0;
+    // 1. Calculate Active Streak STRICTLY from Habits (independent of Tasks)
+    if (_habits.isEmpty) {
       _user.activeStreak = 0;
-      return;
+    } else {
+      _user.activeStreak = _habits.fold<int>(
+        0,
+        (maxStreak, h) => h.streakDay > maxStreak ? h.streakDay : maxStreak,
+      );
     }
-    final completed = _tasks.where((t) => t.isCompleted).length;
-    final total = _tasks.length;
-    _user.focusScore = ((completed / total) * 100).round();
-    _user.activeStreak = completed;
+
+    // 2. Calculate Focus Score based on Task completion & Habit consistency
+    final taskTotal = _tasks.length;
+    final taskCompleted = _tasks.where((t) => t.isCompleted).length;
+    final taskRatio = taskTotal > 0 ? (taskCompleted / taskTotal) : 0.0;
+
+    final habitTotal = _habits.length;
+    final habitCompleted = _habits.where((h) => h.isCompleted).length;
+    final habitRatio = habitTotal > 0 ? (habitCompleted / habitTotal) : 0.0;
+
+    if (taskTotal == 0 && habitTotal == 0) {
+      _user.focusScore = 0;
+    } else if (habitTotal == 0) {
+      _user.focusScore = (taskRatio * 100).round();
+    } else if (taskTotal == 0) {
+      _user.focusScore = (habitRatio * 100).round();
+    } else {
+      _user.focusScore = ((taskRatio * 0.6 + habitRatio * 0.4) * 100).round();
+    }
+
     if (_isLoggedIn) {
       ApiService.updateUserProfileOnBackend({
         'focus_score': _user.focusScore,
@@ -1559,12 +1607,10 @@ class AppProvider extends ChangeNotifier {
   Future<void> syncTasksFromCloud() async {
     try {
       final remoteTasks = await ApiService.fetchTasks();
-      if (remoteTasks.isNotEmpty) {
-        _tasks = remoteTasks;
-        _saveTasks();
-        _recalculateMetrics();
-        notifyListeners();
-      }
+      _tasks = remoteTasks;
+      _saveTasks();
+      _recalculateMetrics();
+      notifyListeners();
     } catch (e) {
       debugPrint('[AppProvider] syncTasksFromCloud error: $e');
     }
@@ -1573,14 +1619,12 @@ class AppProvider extends ChangeNotifier {
   Future<void> syncHabitsFromCloud() async {
     try {
       final remoteHabits = await ApiService.fetchHabits();
-      if (remoteHabits.isNotEmpty) {
-        _habits = remoteHabits;
-        for (final h in _habits) {
-          h.recalculateStreaks(DateTime.now());
-        }
-        _saveHabits();
-        notifyListeners();
+      _habits = remoteHabits;
+      for (final h in _habits) {
+        h.recalculateStreaks(DateTime.now());
       }
+      _saveHabits();
+      notifyListeners();
     } catch (e) {
       debugPrint('[AppProvider] syncHabitsFromCloud error: $e');
     }
@@ -1589,11 +1633,9 @@ class AppProvider extends ChangeNotifier {
   Future<void> syncExpensesFromCloud() async {
     try {
       final remoteExpenses = await ApiService.fetchExpenses();
-      if (remoteExpenses.isNotEmpty) {
-        _expenses = remoteExpenses;
-        _saveExpenses();
-        notifyListeners();
-      }
+      _expenses = remoteExpenses;
+      _saveExpenses();
+      notifyListeners();
     } catch (e) {
       debugPrint('[AppProvider] syncExpensesFromCloud error: $e');
     }
@@ -1602,11 +1644,9 @@ class AppProvider extends ChangeNotifier {
   Future<void> syncSubjectsFromCloud() async {
     try {
       final remoteSubjects = await ApiService.fetchSubjects();
-      if (remoteSubjects.isNotEmpty) {
-        _subjects = remoteSubjects;
-        _saveSubjects();
-        notifyListeners();
-      }
+      _subjects = remoteSubjects;
+      _saveSubjects();
+      notifyListeners();
     } catch (e) {
       debugPrint('[AppProvider] syncSubjectsFromCloud error: $e');
     }
@@ -1615,14 +1655,12 @@ class AppProvider extends ChangeNotifier {
   Future<void> syncStudyItemsFromCloud() async {
     try {
       final remoteItems = await ApiService.fetchStudyItems();
-      if (remoteItems.isNotEmpty) {
-        _studyItems = remoteItems;
-        for (final s in _subjects) {
-          _updateSubjectProgress(s.id);
-        }
-        _saveStudyItems();
-        notifyListeners();
+      _studyItems = remoteItems;
+      for (final s in _subjects) {
+        _updateSubjectProgress(s.id);
       }
+      _saveStudyItems();
+      notifyListeners();
     } catch (e) {
       debugPrint('[AppProvider] syncStudyItemsFromCloud error: $e');
     }
@@ -1631,11 +1669,9 @@ class AppProvider extends ChangeNotifier {
   Future<void> syncCalendarEventsFromCloud() async {
     try {
       final remoteEvents = await ApiService.fetchCalendarEvents();
-      if (remoteEvents.isNotEmpty) {
-        _calendarEvents = remoteEvents;
-        _saveEvents();
-        notifyListeners();
-      }
+      _calendarEvents = remoteEvents;
+      _saveEvents();
+      notifyListeners();
     } catch (e) {
       debugPrint('[AppProvider] syncCalendarEventsFromCloud error: $e');
     }
@@ -1644,11 +1680,9 @@ class AppProvider extends ChangeNotifier {
   Future<void> syncCareerRoadmapFromCloud() async {
     try {
       final remoteNodes = await ApiService.fetchCareerRoadmapNodes();
-      if (remoteNodes.isNotEmpty) {
-        _careerNodes = remoteNodes;
-        _saveCareerNodes();
-        notifyListeners();
-      }
+      _careerNodes = remoteNodes;
+      _saveCareerNodes();
+      notifyListeners();
     } catch (e) {
       debugPrint('[AppProvider] syncCareerRoadmapFromCloud error: $e');
     }
@@ -1657,11 +1691,9 @@ class AppProvider extends ChangeNotifier {
   Future<void> syncJournalEntriesFromCloud() async {
     try {
       final remoteEntries = await ApiService.fetchJournalEntries();
-      if (remoteEntries.isNotEmpty) {
-        _journalEntries = remoteEntries;
-        _saveJournalEntries();
-        notifyListeners();
-      }
+      _journalEntries = remoteEntries;
+      _saveJournalEntries();
+      notifyListeners();
     } catch (e) {
       debugPrint('[AppProvider] syncJournalEntriesFromCloud error: $e');
     }

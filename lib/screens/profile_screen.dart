@@ -4,7 +4,6 @@ import '../providers/app_provider.dart';
 import '../theme/app_theme.dart';
 import 'pricing_screen.dart';
 import 'payment_history_screen.dart';
-import 'referral_screen.dart';
 import 'about_us_screen.dart';
 import 'terms_conditions_screen.dart';
 import 'auth_entry_screen.dart';
@@ -81,27 +80,12 @@ class ProfileScreen extends StatelessWidget {
             ),
             const SizedBox(height: 24),
 
-            // Stat Cards (Focus Score & Active Streak)
-            Row(
-              children: [
-                Expanded(
-                  child: _buildStatCard(
-                    context,
-                    title: 'FOCUS SCORE',
-                    value: '${user.focusScore}',
-                    valueColor: isDark ? AppTheme.darkIconGlow : AppTheme.primaryAccent,
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: _buildStatCard(
-                    context,
-                    title: 'ACTIVE STREAK',
-                    value: '${user.activeStreak} Days',
-                    valueColor: isDark ? Colors.white : AppTheme.textPrimary,
-                  ),
-                ),
-              ],
+            // Stat Card (Focus Score)
+            _buildStatCard(
+              context,
+              title: 'FOCUS SCORE',
+              value: '${user.focusScore}',
+              valueColor: isDark ? AppTheme.darkIconGlow : AppTheme.primaryAccent,
             ),
             const SizedBox(height: 24),
 
@@ -291,17 +275,6 @@ class ProfileScreen extends StatelessWidget {
                     title: 'Support & Care',
                     onTap: () => _showDialog(context, 'Support & Care',
                         'For support, inquiries, or feedback, please contact us at wrindhaos@gmail.com')),
-                _MenuItemData(
-                    icon: Icons.share_outlined,
-                    title: 'Referral Page',
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const ReferralScreen(),
-                        ),
-                      );
-                    }),
               ],
             ),
             const SizedBox(height: 24),
