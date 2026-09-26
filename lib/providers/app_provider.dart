@@ -423,6 +423,7 @@ class AppProvider extends ChangeNotifier {
 
   void addStudyUnit(StudyUnit unit) {
     _studyUnits.add(unit);
+    _updateSubjectProgress(unit.subjectId);
     _saveStudyUnits();
     notifyListeners();
     ApiService.createStudyUnitOnBackend(unit);
@@ -448,6 +449,7 @@ class AppProvider extends ChangeNotifier {
         t.isCompleted = true;
         ApiService.toggleStudyTopicOnBackend(t.id);
       }
+      _updateSubjectProgress(_studyUnits[idx].subjectId);
       _saveStudyUnits();
       _saveStudyTopics();
       notifyListeners();
@@ -456,8 +458,16 @@ class AppProvider extends ChangeNotifier {
   }
 
   void deleteStudyUnit(String unitId) {
+    final idx = _studyUnits.indexWhere((u) => u.id == unitId);
+    String? subjectId;
+    if (idx != -1) {
+      subjectId = _studyUnits[idx].subjectId;
+    }
     _studyUnits.removeWhere((u) => u.id == unitId);
     _studyTopics.removeWhere((t) => t.unitId == unitId);
+    if (subjectId != null && subjectId.isNotEmpty) {
+      _updateSubjectProgress(subjectId);
+    }
     _saveStudyUnits();
     _saveStudyTopics();
     notifyListeners();
