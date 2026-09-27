@@ -143,6 +143,7 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    ApiService.logAuth('User logout initiated', {'userId': _user.id});
     _isLoggedIn = false;
     _user = UserProfile(
       id: 'u_guest',
@@ -1042,7 +1043,12 @@ class AppProvider extends ChangeNotifier {
       storedToken ??= await ApiService.getSessionToken();
       Map<String, dynamic>? cachedUser = await AuthApiService.getCachedUser();
       cachedUser ??= await ApiService.getSessionUser();
-      if (storedToken != null && storedToken.isNotEmpty && cachedUser != null) {
+      if (storedToken != null &&
+          storedToken.isNotEmpty &&
+          storedToken != 'guest_token' &&
+          cachedUser != null &&
+          cachedUser['id'] != 'guest_user') {
+        ApiService.logAuth('Restoring authenticated session during startup', {'userId': cachedUser['id']});
         setAuthenticatedSession(userMap: cachedUser, token: storedToken);
       }
 
@@ -1247,6 +1253,7 @@ class AppProvider extends ChangeNotifier {
       _notifications = [];
     }
 
+    recalculateAllSubjectProgress();
     _recalculateMetrics();
     syncAllDataFromCloud();
   }
@@ -1594,6 +1601,12 @@ class AppProvider extends ChangeNotifier {
 
   Future<void> syncAllDataFromCloud() async {
     if (!_isLoggedIn) return;
+    final token = await ApiService.getSessionToken();
+    if (token == null || token.isEmpty) {
+      _isLoggedIn = false;
+      notifyListeners();
+      return;
+    }
     _isSyncing = true;
     try {
       await Future.wait([
@@ -1616,10 +1629,26 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
+  void recalculateAllSubjectProgress() {
+    for (final s in _subjects) {
+      _updateSubjectProgress(s.id);
+    }
+  }
+
   Future<void> syncTasksFromCloud() async {
     try {
       final remoteTasks = await ApiService.fetchTasks();
-      _tasks = remoteTasks;
+      if (remoteTasks.isNotEmpty) {
+        final Map<String, Task> taskMap = {for (var t in _tasks) t.id: t};
+        for (var rt in remoteTasks) {
+          taskMap[rt.id] = rt;
+        }
+        _tasks = taskMap.values.toList();
+      } else if (_tasks.isNotEmpty) {
+        for (final t in _tasks) {
+          ApiService.createTaskOnBackend(t);
+        }
+      }
       _saveTasks();
       _recalculateMetrics();
       notifyListeners();
@@ -1631,7 +1660,17 @@ class AppProvider extends ChangeNotifier {
   Future<void> syncHabitsFromCloud() async {
     try {
       final remoteHabits = await ApiService.fetchHabits();
-      _habits = remoteHabits;
+      if (remoteHabits.isNotEmpty) {
+        final Map<String, Habit> habitMap = {for (var h in _habits) h.id: h};
+        for (var rh in remoteHabits) {
+          habitMap[rh.id] = rh;
+        }
+        _habits = habitMap.values.toList();
+      } else if (_habits.isNotEmpty) {
+        for (final h in _habits) {
+          ApiService.createHabitOnBackend(h);
+        }
+      }
       for (final h in _habits) {
         h.recalculateStreaks(DateTime.now());
       }
@@ -1645,7 +1684,17 @@ class AppProvider extends ChangeNotifier {
   Future<void> syncExpensesFromCloud() async {
     try {
       final remoteExpenses = await ApiService.fetchExpenses();
-      _expenses = remoteExpenses;
+      if (remoteExpenses.isNotEmpty) {
+        final Map<String, ExpenseTransaction> expMap = {for (var e in _expenses) e.id: e};
+        for (var re in remoteExpenses) {
+          expMap[re.id] = re;
+        }
+        _expenses = expMap.values.toList();
+      } else if (_expenses.isNotEmpty) {
+        for (final e in _expenses) {
+          ApiService.createExpenseOnBackend(e);
+        }
+      }
       _saveExpenses();
       notifyListeners();
     } catch (e) {
@@ -1656,7 +1705,18 @@ class AppProvider extends ChangeNotifier {
   Future<void> syncSubjectsFromCloud() async {
     try {
       final remoteSubjects = await ApiService.fetchSubjects();
-      _subjects = remoteSubjects;
+      if (remoteSubjects.isNotEmpty) {
+        final Map<String, StudySubject> subMap = {for (var s in _subjects) s.id: s};
+        for (var rs in remoteSubjects) {
+          subMap[rs.id] = rs;
+        }
+        _subjects = subMap.values.toList();
+      } else if (_subjects.isNotEmpty) {
+        for (final s in _subjects) {
+          ApiService.createSubjectOnBackend(s);
+        }
+      }
+      recalculateAllSubjectProgress();
       _saveSubjects();
       notifyListeners();
     } catch (e) {
@@ -1667,10 +1727,18 @@ class AppProvider extends ChangeNotifier {
   Future<void> syncStudyItemsFromCloud() async {
     try {
       final remoteItems = await ApiService.fetchStudyItems();
-      _studyItems = remoteItems;
-      for (final s in _subjects) {
-        _updateSubjectProgress(s.id);
+      if (remoteItems.isNotEmpty) {
+        final Map<String, StudyItem> itemMap = {for (var i in _studyItems) i.id: i};
+        for (var ri in remoteItems) {
+          itemMap[ri.id] = ri;
+        }
+        _studyItems = itemMap.values.toList();
+      } else if (_studyItems.isNotEmpty) {
+        for (final i in _studyItems) {
+          ApiService.createStudyItemOnBackend(i);
+        }
       }
+      recalculateAllSubjectProgress();
       _saveStudyItems();
       notifyListeners();
     } catch (e) {
@@ -1681,7 +1749,17 @@ class AppProvider extends ChangeNotifier {
   Future<void> syncCalendarEventsFromCloud() async {
     try {
       final remoteEvents = await ApiService.fetchCalendarEvents();
-      _calendarEvents = remoteEvents;
+      if (remoteEvents.isNotEmpty) {
+        final Map<String, CalendarEvent> evtMap = {for (var e in _calendarEvents) e.id: e};
+        for (var re in remoteEvents) {
+          evtMap[re.id] = re;
+        }
+        _calendarEvents = evtMap.values.toList();
+      } else if (_calendarEvents.isNotEmpty) {
+        for (final e in _calendarEvents) {
+          ApiService.createCalendarEventOnBackend(e);
+        }
+      }
       _saveEvents();
       notifyListeners();
     } catch (e) {
@@ -1693,7 +1771,11 @@ class AppProvider extends ChangeNotifier {
     try {
       final remoteNodes = await ApiService.fetchCareerRoadmapNodes();
       if (remoteNodes.isNotEmpty) {
-        _careerNodes = remoteNodes;
+        final Map<String, CareerRoadmapNode> nodeMap = {for (var n in _careerNodes) n.id: n};
+        for (var rn in remoteNodes) {
+          nodeMap[rn.id] = rn;
+        }
+        _careerNodes = nodeMap.values.toList();
         _saveCareerNodes();
         notifyListeners();
       }
@@ -1705,7 +1787,17 @@ class AppProvider extends ChangeNotifier {
   Future<void> syncJournalEntriesFromCloud() async {
     try {
       final remoteEntries = await ApiService.fetchJournalEntries();
-      _journalEntries = remoteEntries;
+      if (remoteEntries.isNotEmpty) {
+        final Map<String, JournalEntry> entryMap = {for (var j in _journalEntries) j.id: j};
+        for (var rj in remoteEntries) {
+          entryMap[rj.id] = rj;
+        }
+        _journalEntries = entryMap.values.toList();
+      } else if (_journalEntries.isNotEmpty) {
+        for (final j in _journalEntries) {
+          ApiService.createJournalEntryOnBackend(j);
+        }
+      }
       _saveJournalEntries();
       notifyListeners();
     } catch (e) {

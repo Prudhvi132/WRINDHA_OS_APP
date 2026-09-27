@@ -198,7 +198,7 @@ function sanitizeUser(user) {
 // -----------------------------------------------------------------------------
 // 2. JWT TOKEN HELPERS
 // -----------------------------------------------------------------------------
-function generateJwtToken(payload, expiresInMinutes = 60 * 24 * 30) { // 30 days
+function generateJwtToken(payload, expiresInMinutes = 60 * 24 * 365) { // 365 days (1 year session duration)
   const header = { alg: 'HS256', typ: 'JWT' };
   const exp = Math.floor(Date.now() / 1000) + expiresInMinutes * 60;
   const fullPayload = { ...payload, exp };
@@ -350,25 +350,43 @@ async function handleApiRequest(req, res) {
   const query = { ...(parsedUrl.query || {}), ...(req.query || {}) };
 
   // Support Vercel serverless catch-all routing
-  if (pathname === '/api/[...path]' || pathname === '/api' || pathname === '' || pathname === '/') {
-    if (req.headers['x-invoke-path'] && req.headers['x-invoke-path'] !== '/api/[...path]') {
-      pathname = req.headers['x-invoke-path'];
+  if (
+    pathname === '/api/[...path]' ||
+    pathname === '/api/index' ||
+    pathname === '/api/index.js' ||
+    pathname === '/api' ||
+    pathname === '' ||
+    pathname === '/' ||
+    pathname.includes('index')
+  ) {
+    const candidate =
+      req.headers['x-forwarded-uri'] ||
+      req.headers['x-matched-path'] ||
+      req.headers['x-invoke-path'];
+    if (candidate && candidate.startsWith('/api') && !candidate.includes('index') && !candidate.includes('[...path]')) {
+      pathname = candidate.split('?')[0];
+    } else if (req.headers['x-now-route-matches']) {
+      const match = req.headers['x-now-route-matches'].match(/(?:^|&)1=([^&]+)/);
+      if (match) {
+        pathname = '/api/' + decodeURIComponent(match[1]).replace(/^\/+/, '');
+      }
     } else {
       const rawPath = req.query?.path || parsedUrl.query?.path;
       if (rawPath) {
         const subPath = Array.isArray(rawPath) ? rawPath.join('/') : String(rawPath);
         pathname = '/api/' + subPath.replace(/^\/+/, '');
-      } else if (req.headers['x-now-route-matches']) {
-        const match = req.headers['x-now-route-matches'].match(/(?:^|&)1=([^&]+)/);
-        if (match) {
-          pathname = '/api/' + decodeURIComponent(match[1]).replace(/^\/+/, '');
-        }
       } else if (req.headers['x-forwarded-uri']) {
         pathname = req.headers['x-forwarded-uri'].split('?')[0];
       }
     }
   }
   pathname = (pathname || '/').replace(/\/+$/, '') || '/';
+  if (pathname.includes('/auth-')) pathname = pathname.replace('/auth-', '/auth/');
+  if (pathname.includes('/users-')) pathname = pathname.replace('/users-', '/users/');
+  if (pathname.includes('/forgot-password-')) pathname = pathname.replace('/forgot-password-', '/forgot-password/');
+  if (!pathname.startsWith('/api/') && pathname !== '/api') {
+    pathname = '/api' + (pathname.startsWith('/') ? pathname : '/' + pathname);
+  }
 
   const body = sanitizeInput(await parseRequestBody(req));
 
@@ -411,9 +429,9 @@ async function handleApiRequest(req, res) {
     return sendJSON(res, 200, { valid: false, message: 'Invalid referral code.' });
   }
 
-  // 3. Register Initiate (Send Real Email OTP)
+  // 3. Register Initiate (Send Real Email OTP - Passwordless Auth)
   if (pathname === '/api/auth/register-initiate' && method === 'POST') {
-    const { username, email, password, confirmPassword, referralCode } = body;
+    const { username, email, referralCode } = body;
     const cleanUsername = (username || '').trim().toLowerCase();
     const cleanEmail = (email || '').trim().toLowerCase();
 
@@ -426,9 +444,6 @@ async function handleApiRequest(req, res) {
     if (await DatabaseManager.isEmailTombstoned(cleanEmail)) {
       return sendJSON(res, 403, { success: false, error: 'ACCOUNT_DELETED', message: 'This account has been permanently deleted.' });
     }
-    if (!password || password.length < 6) {
-      return sendJSON(res, 400, { success: false, message: 'Password must be at least 6 characters long.' });
-    }
 
     const existingUser = await DatabaseManager.getUserByEmailOrUsername(cleanUsername) || await DatabaseManager.getUserByEmailOrUsername(cleanEmail);
     if (existingUser) {
@@ -440,8 +455,6 @@ async function handleApiRequest(req, res) {
       otp: otpCode,
       type: 'register',
       username: cleanUsername,
-      passwordHash: hashPassword(password),
-      plainPassword: password,
       referralCode: referralCode ? referralCode.trim().toUpperCase() : null,
       expiresAt: Date.now() + 10 * 60 * 1000,
       createdAt: Date.now(),
@@ -449,7 +462,7 @@ async function handleApiRequest(req, res) {
     };
     await storeAuthOtp(cleanEmail, otpData);
 
-    console.log(`[AUTH OTP] Registration code generated for: ${redactEmail(cleanEmail)}`);
+    console.log(`[AUTH OTP] Passwordless Registration code generated for: ${redactEmail(cleanEmail)}`);
 
     // Dispatch real email via MSG91
     try {
@@ -610,11 +623,10 @@ async function handleApiRequest(req, res) {
     });
   }
 
-  // 5a. Login Initiate (Validate Credentials & Dispatch OTP)
+  // 5a. Login Initiate (Passwordless Email OTP Dispatch)
   if (pathname === '/api/auth/login-initiate' && method === 'POST') {
-    const { email, identifier, username, password } = body;
+    const { email, identifier, username } = body;
     const cleanEmail = (email || identifier || username || '').trim().toLowerCase();
-    const loginRateKey = getLoginRateKey(req, cleanEmail);
 
     if (!cleanEmail || !cleanEmail.includes('@')) {
       return sendJSON(res, 400, { success: false, message: 'Please provide your registered email address.' });
@@ -623,130 +635,23 @@ async function handleApiRequest(req, res) {
       return sendJSON(res, 403, { success: false, error: 'ACCOUNT_DELETED', message: 'This account has been permanently deleted.' });
     }
 
-    if (!password) {
-      return sendJSON(res, 400, { success: false, message: 'Password is required to authenticate.' });
-    }
-
-    if (isLoginRateLimited(loginRateKey)) {
-      console.warn(`[AUTH LOGIN BLOCKED] Rate limit reached for: ${redactEmail(cleanEmail)}`);
-      return sendJSON(res, 429, { success: false, message: 'Too many failed login attempts. Please try again later.' });
-    }
-
     let user = await DatabaseManager.getUserByEmailOrUsername(cleanEmail);
 
-    // Auto-provision user profile if not in local store but valid credentials or Supabase user
+    if (!user && (cleanEmail.includes('reviewer') || cleanEmail === 'demo.reviewer@wrindha.app' || cleanEmail === 'reviewer@wrindha.app' || cleanEmail === 'test.reviewer@gmail.com')) {
+      user = await DatabaseManager.createUser({
+        username: 'GoogleReviewer',
+        email: cleanEmail,
+        is_email_verified: true,
+      });
+    }
+
     if (!user) {
-      if (isSupabaseConfigured() && supabase) {
-        try {
-          const { data, error } = await supabase.auth.signInWithPassword({
-            email: cleanEmail,
-            password: password,
-          });
-          if (data && data.user && !error) {
-            user = await DatabaseManager.createUser({
-              id: data.user.id,
-              username: cleanEmail.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '_'),
-              email: cleanEmail,
-              password_hash: hashPassword(password),
-              is_email_verified: true,
-            });
-          }
-        } catch (_) {}
-      }
-
-      if (!user && (cleanEmail.includes('reviewer') || cleanEmail === 'demo.reviewer@wrindha.app' || cleanEmail === 'reviewer@wrindha.app' || cleanEmail === 'test.reviewer@gmail.com')) {
-        user = await DatabaseManager.createUser({
-          username: 'GoogleReviewer',
-          email: cleanEmail,
-          password_hash: hashPassword(password || 'Reviewer2026!'),
-          is_email_verified: true,
-        });
-      }
-
-      if (!user) {
-        recordLoginFailure(loginRateKey);
-        console.warn(`[AUTH LOGIN FAILURE] Invalid credentials for: ${redactEmail(cleanEmail)}`);
-        return sendJSON(res, 401, {
-          success: false,
-          message: 'Invalid email or password.',
-        });
-      }
-    }
-
-    // Validate credentials: verify user password against stored password_hash or Supabase Auth
-    let isPasswordCorrect = false;
-    let hasPasswordHash = !!user.password_hash;
-
-    if (cleanEmail.includes('reviewer') || cleanEmail === 'demo.reviewer@wrindha.app' || cleanEmail === 'reviewer@wrindha.app' || cleanEmail === 'test.reviewer@gmail.com') {
-      isPasswordCorrect = true;
-    } else if (hasPasswordHash) {
-      isPasswordCorrect = verifyPassword(password, user.password_hash);
-    }
-
-    let isPromotedFromNewPassword = false;
-    if (!isPasswordCorrect && user.new_password) {
-      if (verifyPassword(password, user.new_password)) {
-        isPasswordCorrect = true;
-        isPromotedFromNewPassword = true;
-      }
-    }
-
-    if (!isPasswordCorrect && isSupabaseConfigured() && supabase) {
-      try {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: cleanEmail,
-          password: password,
-        });
-        if (data && data.user && !error) {
-          isPasswordCorrect = true;
-          user.password_hash = hashPassword(password);
-          await DatabaseManager.updateUser(user.id, { password_hash: user.password_hash, new_password: null });
-        }
-      } catch (_) {}
-    }
-
-    if (!isPasswordCorrect) {
-      recordLoginFailure(loginRateKey);
-      console.warn(`[AUTH LOGIN FAILURE] Invalid credentials for: ${redactEmail(cleanEmail)}`);
-      return sendJSON(res, 401, {
+      return sendJSON(res, 404, {
         success: false,
-        message: 'Invalid email or password.',
+        message: 'No account found with this email address. Please click "Create Account".',
       });
     }
 
-    if (isPromotedFromNewPassword) {
-      console.log(`[AUTH PROMOTION] Logged in with staged password. Promoting new_password to password_hash for: ${redactEmail(cleanEmail)}`);
-      const promotedHash = user.new_password;
-      user.password_hash = promotedHash;
-      user.new_password = null;
-      await DatabaseManager.updateUser(user.id, {
-        password_hash: promotedHash,
-        new_password: null,
-      });
-      DatabaseManager.setUserPasswordHash(cleanEmail, promotedHash);
-      if (user.username) DatabaseManager.setUserPasswordHash(user.username, promotedHash);
-
-      if (isSupabaseConfigured() && supabase) {
-        try {
-          const { data: userRes } = await supabase.auth.admin.getUserById(user.id);
-          if (userRes?.user) {
-            await supabase.auth.admin.updateUserById(user.id, {
-              password: password,
-              user_metadata: {
-                ...(userRes.user.user_metadata || {}),
-                passwordHash: promotedHash,
-              },
-            }).catch(() => {});
-          }
-        } catch (supErr) {
-          console.warn('[SUPABASE AUTH PROMOTION ERROR]:', supErr.message);
-        }
-      }
-    }
-
-    clearLoginFailures(loginRateKey);
-
-    // Generate login OTP in background for 2FA session compatibility
     const otpCode = crypto.randomInt(100000, 1000000).toString();
     const otpData = {
       otp: otpCode,
@@ -760,6 +665,8 @@ async function handleApiRequest(req, res) {
     };
     await storeAuthOtp(cleanEmail, otpData);
 
+    console.log(`[AUTH OTP] Passwordless Login code generated for: ${redactEmail(cleanEmail)}`);
+
     try {
       await sendEmailOtp({
         email: cleanEmail,
@@ -770,18 +677,12 @@ async function handleApiRequest(req, res) {
       console.error('[LOGIN EMAIL ERROR]:', e.message);
     }
 
-    const sub = await DatabaseManager.getUserSubscription(user.id);
-    const token = generateJwtToken({ id: user.id, email: user.email, username: user.username });
-
     return sendJSON(res, 200, {
       success: true,
-      message: 'Login successful.',
-      token,
-      user: sanitizeUser(user),
-      subscription: sub,
+      message: `6-digit verification code sent to ${cleanEmail}`,
       email: cleanEmail,
       username: user.username,
-      requiresOtp: false,
+      requiresOtp: true,
     });
   }
 
@@ -1122,6 +1023,97 @@ async function handleApiRequest(req, res) {
   }
 
   // ---------------------------------------------------------------------------
+  // 6d. Access Token Refresh (Session Restoration & Proactive Renewal)
+  // ---------------------------------------------------------------------------
+  if ((pathname === '/api/auth/refresh-token' || pathname === '/api/auth-refresh-token') && method === 'POST') {
+    const rawToken = extractBearerToken(req) || body.token;
+    if (!rawToken) {
+      return sendJSON(res, 401, {
+        success: false,
+        error: 'NO_TOKEN',
+        message: 'No session token provided for refresh.',
+      });
+    }
+
+    let tokenPayload = verifyJwtToken(rawToken);
+    if (!tokenPayload) {
+      try {
+        const parts = rawToken.split('.');
+        if (parts.length === 3) {
+          const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+          if (payload && (payload.id || payload.sub || payload.email)) {
+            const exp = payload.exp || 0;
+            const now = Math.floor(Date.now() / 1000);
+            if (now - exp < 30 * 24 * 60 * 60) {
+              tokenPayload = payload;
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (!tokenPayload || (!tokenPayload.id && !tokenPayload.sub && !tokenPayload.email)) {
+      return sendJSON(res, 401, {
+        success: false,
+        error: 'SESSION_EXPIRED',
+        message: 'Session has expired. Please log in again.',
+      });
+    }
+
+    let userId = tokenPayload.id || tokenPayload.sub;
+    let currentUser = userId ? await DatabaseManager.getUserById(userId) : null;
+    if (!currentUser && tokenPayload.email) {
+      currentUser = await DatabaseManager.getUserByEmailOrUsername(tokenPayload.email);
+    }
+
+    if (!currentUser) {
+      return sendJSON(res, 401, {
+        success: false,
+        error: 'USER_NOT_FOUND',
+        message: 'User account no longer exists.',
+      });
+    }
+
+    const refreshedToken = generateJwtToken({
+      id: currentUser.id,
+      email: currentUser.email,
+      username: currentUser.username,
+    });
+    const sub = await DatabaseManager.getUserSubscription(currentUser.id);
+
+    console.log(`[AUTH REFRESH] Access-token refreshed for user: ${currentUser.id}`);
+
+    return sendJSON(res, 200, {
+      success: true,
+      message: 'Token refreshed successfully.',
+      token: refreshedToken,
+      user: sanitizeUser(currentUser),
+      subscription: sub,
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // AUTH ROUTE GUARD:
+  // Public auth endpoints must NEVER fall through to the protected route middleware!
+  // If an auth endpoint was requested but did not match any handler above, return 404
+  // rather than a false 401 "Session expired".
+  // ---------------------------------------------------------------------------
+  if (
+    pathname.startsWith('/api/auth/') ||
+    pathname.startsWith('/api/auth-') ||
+    pathname.startsWith('/auth/') ||
+    pathname.startsWith('/auth-') ||
+    pathname.startsWith('/api/forgot-password') ||
+    pathname.startsWith('/forgot-password')
+  ) {
+    return sendJSON(res, 404, {
+      success: false,
+      error: 'AUTH_ENDPOINT_NOT_FOUND',
+      message: `Authentication endpoint ${pathname} [${method}] was not found.`,
+    });
+  }
+
+  // ---------------------------------------------------------------------------
   // AUTHENTICATION MIDDLEWARE (PROTECTED ROUTES)
   // ---------------------------------------------------------------------------
   const token = extractBearerToken(req);
@@ -1131,7 +1123,7 @@ async function handleApiRequest(req, res) {
     return sendJSON(res, 401, {
       success: false,
       error: 'UNAUTHORIZED',
-      message: 'Authentication required. Please provide a valid Bearer token.',
+      message: 'Session expired. Please log in again.',
     });
   }
 

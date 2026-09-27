@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/models.dart';
@@ -13,7 +14,39 @@ class ApiService {
 
   static const String _tokenKey = 'wrindha_auth_token';
   static const String _userKey = 'wrindha_auth_user';
+  static const String _sessionTimestampKey = 'wrindha_session_saved_at';
   static String? currentOtpSession;
+
+  /// Secure structured logging without exposing sensitive tokens or OTPs
+  static void logAuth(String event, [Map<String, dynamic>? details]) {
+    final buffer = StringBuffer('[AUTH_SESSION] $event');
+    if (details != null && details.isNotEmpty) {
+      final safe = details.map((k, v) {
+        final keyLower = k.toLowerCase();
+        if (keyLower.contains('token') || keyLower.contains('secret') || keyLower.contains('auth')) {
+          if (v == null) return MapEntry(k, 'null');
+          final str = v.toString();
+          if (str.length <= 8) return MapEntry(k, '***');
+          return MapEntry(k, '${str.substring(0, 6)}...${str.substring(str.length - 4)}');
+        }
+        if (keyLower.contains('otp') || keyLower.contains('code') || keyLower.contains('password')) {
+          return MapEntry(k, '[REDACTED]');
+        }
+        if (keyLower.contains('email')) {
+          final email = v.toString();
+          if (email.contains('@')) {
+            final parts = email.split('@');
+            final u = parts[0];
+            final masked = u.length > 2 ? '${u.substring(0, 2)}***' : '$u***';
+            return MapEntry(k, '$masked@${parts[1]}');
+          }
+        }
+        return MapEntry(k, v);
+      });
+      buffer.write(' -> $safe');
+    }
+    debugPrint(buffer.toString());
+  }
 
   /// Helper to generate authenticated HTTP headers
   static Future<Map<String, String>> _getHeaders() async {
@@ -27,30 +60,168 @@ class ApiService {
     };
   }
 
+  /// Execute POST request with resilient fallback URL routing for Vercel
+  static Future<http.Response> _postWithFallback(
+    String primaryEndpoint, {
+    Map<String, String>? headers,
+    Object? body,
+    Duration timeout = const Duration(seconds: 12),
+  }) async {
+    final reqHeaders = headers ?? {'Content-Type': 'application/json'};
+
+    // 1. Try Primary Endpoint (e.g. /auth/login-initiate)
+    try {
+      final response = await http
+          .post(Uri.parse('$baseUrl$primaryEndpoint'), headers: reqHeaders, body: body)
+          .timeout(timeout);
+      if (response.statusCode != 404 && !response.body.contains('The page could not be found')) {
+        return response;
+      }
+    } catch (_) {}
+
+    // 2. Try Flattened Vercel Endpoint Fallback (e.g. /auth-login-initiate)
+    final fallbackEndpoint = primaryEndpoint
+        .replaceAll('/auth/', '/auth-')
+        .replaceAll('/users/', '/users-')
+        .replaceAll('/forgot-password/', '/forgot-password-');
+
+    return await http
+        .post(Uri.parse('$baseUrl$fallbackEndpoint'), headers: reqHeaders, body: body)
+        .timeout(timeout);
+  }
+
+  /// Execute DELETE request with resilient fallback URL routing for Vercel
+  static Future<http.Response> _deleteWithFallback(
+    String primaryEndpoint, {
+    Map<String, String>? headers,
+    Object? body,
+    Duration timeout = const Duration(seconds: 12),
+  }) async {
+    final reqHeaders = headers ?? {'Content-Type': 'application/json'};
+
+    try {
+      final response = await http
+          .delete(Uri.parse('$baseUrl$primaryEndpoint'), headers: reqHeaders, body: body)
+          .timeout(timeout);
+      if (response.statusCode != 404 && !response.body.contains('The page could not be found')) {
+        return response;
+      }
+    } catch (_) {}
+
+    final fallbackEndpoint = primaryEndpoint
+        .replaceAll('/auth/', '/auth-')
+        .replaceAll('/users/', '/users-')
+        .replaceAll('/forgot-password/', '/forgot-password-');
+
+    return await http
+        .delete(Uri.parse('$baseUrl$fallbackEndpoint'), headers: reqHeaders, body: body)
+        .timeout(timeout);
+  }
+
+  /// Execute GET request with resilient fallback URL routing for Vercel
+  static Future<http.Response> _getWithFallback(
+    String primaryEndpoint, {
+    Map<String, String>? headers,
+    Duration timeout = const Duration(seconds: 12),
+  }) async {
+    try {
+      final response = await http
+          .get(Uri.parse('$baseUrl$primaryEndpoint'), headers: headers)
+          .timeout(timeout);
+      if (response.statusCode != 404 && !response.body.contains('The page could not be found')) {
+        return response;
+      }
+    } catch (_) {}
+
+    final fallbackEndpoint = primaryEndpoint
+        .replaceAll('/auth/', '/auth-')
+        .replaceAll('/users/', '/users-')
+        .replaceAll('/forgot-password/', '/forgot-password-');
+
+    return await http
+        .get(Uri.parse('$baseUrl$fallbackEndpoint'), headers: headers)
+        .timeout(timeout);
+  }
+
+  /// Safely decodes HTTP response body into a Map<String, dynamic>.
+  /// Prevents FormatException crashes when Vercel or proxies return HTML 404/500 error pages.
+  static Map<String, dynamic> _safeDecodeResponse(
+  http.Response response, {
+  String defaultErrorMessage =
+      'Network error: Unable to connect to server. Please try again.',
+}) {
+  final body = response.body.trim();
+
+  if (body.isEmpty ||
+      body.startsWith('<') ||
+      body.contains('The page could not be found')) {
+    return {
+      'success': false,
+      'message':
+          'Server returned an invalid response (HTTP ${response.statusCode}).',
+    };
+  }
+
+  try {
+    final decoded = jsonDecode(body);
+
+    if (decoded is Map<String, dynamic>) {
+      // Preserve the actual backend response message.
+      if (response.statusCode == 401) {
+        return {
+          ...decoded,
+          'success': false,
+          'statusCode': 401,
+          'message': decoded['message'] ??
+              'Request was unauthorized. Please verify your login credentials.',
+        };
+      }
+
+      if (response.statusCode >= 400) {
+        return {
+          ...decoded,
+          'success': false,
+          'statusCode': response.statusCode,
+          'message': decoded['message'] ??
+              'Request failed (HTTP ${response.statusCode}).',
+        };
+      }
+
+      return decoded;
+    }
+
+    return {
+      'success': false,
+      'message': defaultErrorMessage,
+    };
+  } catch (_) {
+    return {
+      'success': false,
+      'message':
+          'Server returned an unreadable response (HTTP ${response.statusCode}).',
+    };
+  }
+}
   // ---------------------------------------------------------------------------
   // 1. AUTHENTICATION SERVICES
   // ---------------------------------------------------------------------------
   static Future<Map<String, dynamic>> registerInitiate({
     required String username,
     required String email,
-    required String password,
-    required String confirmPassword,
     String? referralCode,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/auth/register-initiate'),
+      final response = await _postWithFallback(
+        '/auth/register-initiate',
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'username': username.trim().toLowerCase(),
           'email': email.trim().toLowerCase(),
-          'password': password,
-          'confirmPassword': confirmPassword,
           if (referralCode != null && referralCode.trim().isNotEmpty)
             'referralCode': referralCode.trim().toUpperCase(),
         }),
       );
-      final data = jsonDecode(response.body);
+      final data = _safeDecodeResponse(response);
       if (data['otpSession'] != null) {
         currentOtpSession = data['otpSession'];
       }
@@ -58,7 +229,7 @@ class ApiService {
     } catch (e) {
       return {
         'success': false,
-        'message': 'Network error: Unable to connect to server ($e)',
+        'message': 'Network error: Unable to connect to server.',
       };
     }
   }
@@ -110,8 +281,8 @@ class ApiService {
     String? otpSession,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/auth/register-verify'),
+      final response = await _postWithFallback(
+        '/auth/register-verify',
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           if (username != null) 'username': username.trim().toLowerCase(),
@@ -121,7 +292,7 @@ class ApiService {
           'otpSession': otpSession ?? currentOtpSession,
         }),
       );
-      final data = jsonDecode(response.body);
+      final data = _safeDecodeResponse(response);
       final token = data['token'] ?? data['data']?['token'];
       final user = data['user'] ?? data['data']?['user'];
       if (data['success'] == true && token != null) {
@@ -192,12 +363,12 @@ class ApiService {
 
   static Future<Map<String, dynamic>> resendRegistrationOtp(String email) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/auth/resend-otp'),
+      final response = await _postWithFallback(
+        '/auth/resend-otp',
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'email': email.trim().toLowerCase(), 'type': 'register'}),
       );
-      final data = jsonDecode(response.body);
+      final data = _safeDecodeResponse(response);
       if (data['otpSession'] != null) {
         currentOtpSession = data['otpSession'];
       }
@@ -209,14 +380,14 @@ class ApiService {
 
   static Future<Map<String, dynamic>> forgotPasswordInitiate(String email) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/auth/forgot-password/initiate'),
+      final response = await _postWithFallback(
+        '/auth/forgot-password/initiate',
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'email': email.trim().toLowerCase()}),
       );
-      return jsonDecode(response.body);
+      return _safeDecodeResponse(response);
     } catch (e) {
-      return {'success': false, 'message': 'Network error: Unable to connect to server ($e)'};
+      return {'success': false, 'message': 'Network error: Unable to connect to server.'};
     }
   }
 
@@ -225,17 +396,17 @@ class ApiService {
     required String otp,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/auth/forgot-password/verify-otp'),
+      final response = await _postWithFallback(
+        '/auth/forgot-password/verify-otp',
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'email': email.trim().toLowerCase(),
           'otp': otp.trim(),
         }),
       );
-      return jsonDecode(response.body);
+      return _safeDecodeResponse(response);
     } catch (e) {
-      return {'success': false, 'message': 'Network error: Unable to connect to server ($e)'};
+      return {'success': false, 'message': 'Network error: Unable to connect to server.'};
     }
   }
 
@@ -246,8 +417,8 @@ class ApiService {
     required String confirmPassword,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/auth/forgot-password/reset'),
+      final response = await _postWithFallback(
+        '/auth/forgot-password/reset',
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'email': email.trim().toLowerCase(),
@@ -256,45 +427,47 @@ class ApiService {
           'confirmPassword': confirmPassword,
         }),
       );
-      return jsonDecode(response.body);
+      return _safeDecodeResponse(response);
     } catch (e) {
-      return {'success': false, 'message': 'Network error: Unable to connect to server ($e)'};
+      return {'success': false, 'message': 'Network error: Unable to connect to server.'};
     }
   }
 
-  /// Initiate Login via Email + Password credentials verification
-  /// Validates password first, then dispatches real OTP to user's registered email
+  /// Initiate Login via Email OTP dispatch (Passwordless Auth)
   static Future<Map<String, dynamic>> loginInitiate({
     required String email,
-    required String password,
   }) async {
     final clean = email.trim().toLowerCase();
+    logAuth('Initiating passwordless email OTP dispatch', {'email': clean});
 
     // Dedicated Google Play Reviewer Demo Credentials (2FA Static OTP Bypass)
-    if (clean == 'demo.reviewer@wrindha.app' || clean == 'reviewer@wrindha.app' || clean == 'test.reviewer@gmail.com') {
-      if (password.isNotEmpty) {
-        return {
-          'success': true,
-          'message': 'Verification code sent to email.',
-          'email': clean,
-          'username': 'GoogleReviewer',
-        };
-      }
+    if (clean == 'demo.reviewer@wrindha.app' ||
+        clean == 'reviewer@wrindha.app' ||
+        clean == 'test.reviewer@gmail.com') {
+      logAuth('Google reviewer demo credentials matched', {'email': clean});
+      return {
+        'success': true,
+        'message': 'Verification code sent to email.',
+        'email': clean,
+        'username': 'GoogleReviewer',
+      };
     }
 
     try {
-      final response = await http
-          .post(
-            Uri.parse('$baseUrl/auth/login-initiate'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'email': clean,
-              'password': password,
-            }),
-          )
-          .timeout(const Duration(seconds: 10));
-      return jsonDecode(response.body);
+      final response = await _postWithFallback(
+        '/auth/login-initiate',
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'email': clean}),
+      );
+      final data = _safeDecodeResponse(response);
+      logAuth('Login OTP dispatch response', {
+        'status': response.statusCode,
+        'success': data['success'],
+        'message': data['message'],
+      });
+      return data;
     } catch (e) {
+      logAuth('Login initiate network error', {'error': e.toString()});
       // Fallback for reviewer credentials on network timeout
       if (clean.contains('reviewer') || clean.contains('test')) {
         return {
@@ -304,7 +477,7 @@ class ApiService {
           'username': 'GoogleReviewer',
         };
       }
-      return {'success': false, 'message': 'Network error: Unable to connect to server ($e)'};
+      return {'success': false, 'message': 'Network error: Unable to connect to server.'};
     }
   }
 
@@ -312,14 +485,12 @@ class ApiService {
   static Future<Map<String, dynamic>> resendLoginOtp(String email) async {
     final clean = email.trim().toLowerCase();
     try {
-      final response = await http
-          .post(
-            Uri.parse('$baseUrl/auth/resend-otp'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'email': clean, 'type': 'login'}),
-          )
-          .timeout(const Duration(seconds: 10));
-      return jsonDecode(response.body);
+      final response = await _postWithFallback(
+        '/auth/resend-otp',
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'email': clean, 'type': 'login'}),
+      );
+      return _safeDecodeResponse(response);
     } catch (e) {
       return {'success': false, 'message': 'Network error: Unable to resend OTP ($e)'};
     }
@@ -339,17 +510,16 @@ class ApiService {
         cleanEmail == 'test.reviewer@gmail.com' ||
         cleanOtp == '123456') {
       try {
-        final response = await http
-            .post(
-              Uri.parse('$baseUrl/auth/login-verify'),
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode({
-                'email': cleanEmail,
-                'otp': cleanOtp,
-              }),
-            )
-            .timeout(const Duration(seconds: 5));
-        final data = jsonDecode(response.body);
+        final response = await _postWithFallback(
+          '/auth/login-verify',
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'email': cleanEmail,
+            'otp': cleanOtp,
+          }),
+          timeout: const Duration(seconds: 5),
+        );
+        final data = _safeDecodeResponse(response);
         if (data['success'] == true && data['token'] != null) {
           await saveSession(data['token'], data['user']);
           return data;
@@ -375,47 +545,123 @@ class ApiService {
     }
 
     try {
-      final response = await http
-          .post(
-            Uri.parse('$baseUrl/auth/login-verify'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'email': cleanEmail,
-              'otp': cleanOtp,
-            }),
-          )
-          .timeout(const Duration(seconds: 10));
-      final data = jsonDecode(response.body);
+      final response = await _postWithFallback(
+        '/auth/login-verify',
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'email': cleanEmail,
+          'otp': cleanOtp,
+        }),
+      );
+      final data = _safeDecodeResponse(response);
       final token = data['token'] ?? data['data']?['token'];
       final user = data['user'] ?? data['data']?['user'];
       if (data['success'] == true && token != null) {
         await saveSession(token.toString(), user is Map<String, dynamic> ? user : null);
+        logAuth('Session established successfully via OTP verification', {'email': cleanEmail});
+      } else {
+        logAuth('Login OTP verification failed', {'message': data['message']});
       }
       return data;
     } catch (e) {
+      logAuth('Login verify network error', {'error': e.toString()});
       return {'success': false, 'message': 'Network error: Unable to verify OTP ($e)'};
     }
   }
 
-  /// Validate active session and fetch current authenticated profile
+  /// Automatically refresh the access token when necessary
+  static Future<bool> refreshToken() async {
+    final token = await getSessionToken();
+    if (token == null || token.isEmpty) return false;
+
+    logAuth('Initiating access-token refresh');
+    try {
+      final response = await _postWithFallback(
+        '/auth/refresh-token',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({'token': token}),
+      );
+
+      final data = _safeDecodeResponse(response);
+      if (data['success'] == true && data['token'] != null) {
+        final newToken = data['token'].toString();
+        final user = data['user'] is Map<String, dynamic> ? data['user'] : await getSessionUser();
+        await saveSession(newToken, user);
+        logAuth('Access token refreshed and persisted successfully');
+        return true;
+      }
+      logAuth('Token refresh rejected', {'message': data['message']});
+      return false;
+    } catch (e) {
+      logAuth('Token refresh network exception', {'error': e.toString()});
+      return false;
+    }
+  }
+
+  /// Validate active session and fetch current authenticated profile with automatic token refresh
   static Future<Map<String, dynamic>> getCurrentUser() async {
     final token = await getSessionToken();
     if (token == null || token.isEmpty) {
+      logAuth('getCurrentUser: No session token found');
       return {'success': false, 'message': 'No session token found.'};
     }
+
+    logAuth('Validating session profile');
     try {
-      final response = await http
-          .get(
-            Uri.parse('$baseUrl/users/me'),
+      final response = await _getWithFallback(
+        '/users/me',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      // If token is expired or unauthorized, attempt automatic access-token refresh
+      if (response.statusCode == 401) {
+        logAuth('Session returned 401. Attempting automatic token refresh...');
+        final refreshed = await refreshToken();
+        if (refreshed) {
+          final newToken = await getSessionToken();
+          logAuth('Retrying profile validation with refreshed token');
+          final retryResponse = await _getWithFallback(
+            '/users/me',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': 'Bearer $token',
+              if (newToken != null) 'Authorization': 'Bearer $newToken',
             },
-          )
-          .timeout(const Duration(seconds: 8));
-      return jsonDecode(response.body);
+          );
+          final retryData = _safeDecodeResponse(retryResponse);
+          if (retryData['success'] == true || retryData['user'] != null || retryData['id'] != null) {
+            logAuth('Session successfully restored and refreshed');
+            return retryData;
+          }
+        }
+
+        logAuth('Session expired: Token refresh failed or session revoked');
+        return {
+          'success': false,
+          'error': 'UNAUTHORIZED',
+          'statusCode': 401,
+          'isExpired': true,
+          'message': 'Session expired. Please log in again.',
+        };
+      }
+
+      final data = _safeDecodeResponse(response);
+      if (data['success'] == true || data['user'] != null || data['id'] != null) {
+        logAuth('Session profile valid');
+      }
+      return data;
     } catch (e) {
-      return {'success': false, 'message': 'Failed to validate session: $e'};
+      logAuth('Session check network error - preserving offline state', {'error': e.toString()});
+      return {
+        'success': false,
+        'isNetworkError': true,
+        'message': 'Network unavailable. Preserving local session: $e',
+      };
     }
   }
 
@@ -426,21 +672,18 @@ class ApiService {
   }) async {
     final clean = username.trim().toLowerCase();
 
-    // Enforce OTP-backed authentication through backend authority
     try {
-      final response = await http
-          .post(
-            Uri.parse('$baseUrl/auth/login'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'identifier': clean,
-              'email': clean,
-              if (password != null && password.isNotEmpty) 'password': password,
-              if (otp != null && otp.isNotEmpty) 'otp': otp.trim(),
-            }),
-          )
-          .timeout(const Duration(seconds: 10));
-      final data = jsonDecode(response.body);
+      final response = await _postWithFallback(
+        '/auth/login',
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'identifier': clean,
+          'email': clean,
+          if (password != null && password.isNotEmpty) 'password': password,
+          if (otp != null && otp.isNotEmpty) 'otp': otp.trim(),
+        }),
+      );
+      final data = _safeDecodeResponse(response);
       final token = data['token'] ?? data['data']?['token'];
       final user = data['user'] ?? data['data']?['user'];
       if (data['success'] == true && token != null) {
@@ -503,8 +746,8 @@ class ApiService {
   }) async {
     try {
       final headers = await _getHeaders();
-      final response = await http.delete(
-        Uri.parse('$baseUrl/users/me'),
+      final response = await _deleteWithFallback(
+        '/users/me',
         headers: headers,
       );
       final data = jsonDecode(response.body);
@@ -526,6 +769,7 @@ class ApiService {
     await prefs.setString(_tokenKey, token);
     await prefs.setString('saved_session_token', token);
     await prefs.setString('wrindha_secure_jwt_token', token);
+    await prefs.setInt(_sessionTimestampKey, DateTime.now().millisecondsSinceEpoch);
     if (user != null) {
       final userCopy = Map<String, dynamic>.from(user);
       userCopy['token'] ??= token;
@@ -534,13 +778,22 @@ class ApiService {
       await prefs.setString('saved_session_user', userJson);
       await prefs.setString('wrindha_secure_user_profile', userJson);
     }
+    logAuth('Session saved to local storage', {'userId': user?['id']});
   }
 
   static Future<String?> getSessionToken() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_tokenKey) ??
+    final token = prefs.getString(_tokenKey) ??
         prefs.getString('saved_session_token') ??
         prefs.getString('wrindha_secure_jwt_token');
+    if (token == null ||
+        token.isEmpty ||
+        token == 'guest_token' ||
+        token == 'null' ||
+        token == 'undefined') {
+      return null;
+    }
+    return token;
   }
 
   static Future<Map<String, dynamic>?> getSessionUser() async {
@@ -558,7 +811,9 @@ class ApiService {
 
   static Future<bool> hasActiveSession() async {
     final token = await getSessionToken();
-    return token != null && token.isNotEmpty;
+    final active = token != null && token.isNotEmpty && token != 'guest_token';
+    logAuth('Session existence check', {'hasActiveSession': active});
+    return active;
   }
 
   static Future<void> clearSession() async {
@@ -570,13 +825,19 @@ class ApiService {
       await prefs.remove('saved_session_token');
       await prefs.remove('wrindha_secure_jwt_token');
       await prefs.remove('wrindha_secure_user_profile');
-    } catch (_) {}
+      await prefs.remove(_sessionTimestampKey);
+      logAuth('Session successfully cleared from local storage');
+    } catch (e) {
+      logAuth('Error clearing session from storage', {'error': e.toString()});
+    }
   }
 
   // ---------------------------------------------------------------------------
   // 3. SUBSCRIPTION & PAYMENTS
   // ---------------------------------------------------------------------------
   static Future<UserSubscription?> fetchUserSubscription() async {
+    final token = await getSessionToken();
+    if (token == null || token.isEmpty) return null;
     try {
       final headers = await _getHeaders();
       final response = await http.get(Uri.parse('$baseUrl/subscription/me'), headers: headers);
@@ -639,9 +900,14 @@ class ApiService {
   // 5. REFERRAL SYSTEM
   // ---------------------------------------------------------------------------
   static Future<Map<String, dynamic>> fetchMyReferralCode() async {
+    final token = await getSessionToken();
+    if (token == null || token.isEmpty) return {'success': false, 'message': 'Not logged in'};
     try {
       final headers = await _getHeaders();
       final response = await http.get(Uri.parse('$baseUrl/referrals/my-code'), headers: headers);
+      if (response.statusCode == 401) {
+        return {'success': false, 'message': 'Not authenticated'};
+      }
       return jsonDecode(response.body);
     } catch (e) {
       return {'success': false, 'message': 'Fetching referral code failed: $e'};
@@ -668,6 +934,8 @@ class ApiService {
 
   /// Fetch user's habits with streak & completion status for a specific date
   static Future<List<Habit>> fetchHabits({String? date}) async {
+    final token = await getSessionToken();
+    if (token == null || token.isEmpty) return [];
     try {
       final headers = await _getHeaders();
       final uri = Uri.parse('$baseUrl/habits').replace(queryParameters: date != null ? {'date': date} : null);
@@ -778,6 +1046,8 @@ class ApiService {
 
   /// Fetch habit analytics summary
   static Future<Map<String, dynamic>> fetchHabitAnalytics({String? date}) async {
+    final token = await getSessionToken();
+    if (token == null || token.isEmpty) return {'success': false};
     try {
       final headers = await _getHeaders();
       final uri = Uri.parse('$baseUrl/habits/analytics').replace(queryParameters: date != null ? {'date': date} : null);
@@ -815,6 +1085,8 @@ class ApiService {
 
   /// Pro Goal Creation API
   static Future<List<Goal>> fetchGoals({String? tier}) async {
+    final token = await getSessionToken();
+    if (token == null || token.isEmpty) return [];
     try {
       final headers = await _getHeaders();
       final uri = Uri.parse('$baseUrl/goals').replace(queryParameters: tier != null ? {'tier': tier} : null);
@@ -938,6 +1210,8 @@ class ApiService {
   }
 
   static Future<List<CareerRoadmapNode>> fetchCareerRoadmapNodes() async {
+    final token = await getSessionToken();
+    if (token == null || token.isEmpty) return [];
     try {
       final headers = await _getHeaders();
       final response = await http.get(Uri.parse('$baseUrl/career-roadmap'), headers: headers);
@@ -951,10 +1225,15 @@ class ApiService {
 
   /// Real Dynamic Analytics Summary
   static Future<Map<String, dynamic>> fetchAnalyticsSummary() async {
+    final token = await getSessionToken();
+    if (token == null || token.isEmpty) return {'success': false};
     try {
       final headers = await _getHeaders();
       final response = await http.get(Uri.parse('$baseUrl/analytics/summary'), headers: headers);
-      return jsonDecode(response.body);
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      }
+      return {'success': false};
     } catch (e) {
       return {'success': false, 'message': 'Analytics fetch error: $e'};
     }
@@ -964,6 +1243,8 @@ class ApiService {
   // STUDY UNITS & TOPICS API (SUPABASE BACKEND SYNC)
   // ---------------------------------------------------------------------------
   static Future<List<StudyUnit>> fetchStudyUnits({String? subjectId}) async {
+    final token = await getSessionToken();
+    if (token == null || token.isEmpty) return [];
     try {
       final headers = await _getHeaders();
       final uri = Uri.parse('$baseUrl/study-units').replace(queryParameters: subjectId != null ? {'subjectId': subjectId} : null);
@@ -1060,6 +1341,8 @@ class ApiService {
   // TASKS API (SUPABASE BACKEND SYNC)
   // ---------------------------------------------------------------------------
   static Future<List<Task>> fetchTasks() async {
+    final token = await getSessionToken();
+    if (token == null || token.isEmpty) return [];
     try {
       final headers = await _getHeaders();
       final response = await http.get(Uri.parse('$baseUrl/tasks'), headers: headers);
@@ -1116,6 +1399,8 @@ class ApiService {
   // 8. EXPENSES REST APIS (Production-Ready Cloud Sync)
   // ---------------------------------------------------------------------------
   static Future<List<ExpenseTransaction>> fetchExpenses() async {
+    final token = await getSessionToken();
+    if (token == null || token.isEmpty) return [];
     try {
       final headers = await _getHeaders();
       final response = await http.get(Uri.parse('$baseUrl/expenses'), headers: headers);
@@ -1190,6 +1475,8 @@ class ApiService {
   // 9. SUBJECTS REST APIS (Production-Ready Cloud Sync)
   // ---------------------------------------------------------------------------
   static Future<List<StudySubject>> fetchSubjects() async {
+    final token = await getSessionToken();
+    if (token == null || token.isEmpty) return [];
     try {
       final headers = await _getHeaders();
       final response = await http.get(Uri.parse('$baseUrl/subjects'), headers: headers);
@@ -1232,6 +1519,8 @@ class ApiService {
   // 9B. STUDY ITEMS REST APIS (Production-Ready Cloud Sync)
   // ---------------------------------------------------------------------------
   static Future<List<StudyItem>> fetchStudyItems({String? subjectId}) async {
+    final token = await getSessionToken();
+    if (token == null || token.isEmpty) return [];
     try {
       final headers = await _getHeaders();
       final uri = Uri.parse('$baseUrl/study-items').replace(
@@ -1291,6 +1580,8 @@ class ApiService {
   // 10. CALENDAR EVENTS REST APIS (Production-Ready Cloud Sync)
   // ---------------------------------------------------------------------------
   static Future<List<CalendarEvent>> fetchCalendarEvents() async {
+    final token = await getSessionToken();
+    if (token == null || token.isEmpty) return [];
     try {
       final headers = await _getHeaders();
       final response = await http.get(Uri.parse('$baseUrl/calendar'), headers: headers);
@@ -1344,6 +1635,9 @@ class ApiService {
   // 11. JOURNAL ENTRIES REST APIS (Production-Ready Cloud Sync)
   // ---------------------------------------------------------------------------
   static Future<List<JournalEntry>> fetchJournalEntries() async {
+    final token = await getSessionToken();
+    if (token == null || token.isEmpty) return [];
+
     // 1. Primary: Try Backend API
     try {
       final headers = await _getHeaders();
@@ -1361,18 +1655,16 @@ class ApiService {
     // 2. Direct Supabase Fallback
     try {
       final user = await getSessionUser();
-      final token = await getSessionToken();
       final uid = user?['id']?.toString() ?? user?['userId']?.toString();
-      final url = (uid != null && uid.isNotEmpty)
-          ? '$supabaseUrl/rest/v1/journal_entries?user_id=eq.$uid&select=*'
-          : '$supabaseUrl/rest/v1/journal_entries?select=*';
+      if (uid == null || uid.isEmpty) return [];
+      final url = '$supabaseUrl/rest/v1/journal_entries?user_id=eq.$uid&select=*';
 
       final res = await http
           .get(
             Uri.parse(url),
             headers: {
               'apikey': supabaseAnonKey,
-              if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+              'Authorization': 'Bearer $token',
             },
           )
           .timeout(const Duration(seconds: 6));
@@ -1545,14 +1837,7 @@ class ApiService {
   // 12. USER PROFILE CLOUD SYNC
   // ---------------------------------------------------------------------------
   static Future<Map<String, dynamic>> fetchUserProfileFromBackend() async {
-    try {
-      final headers = await _getHeaders();
-      final response = await http.get(Uri.parse('$baseUrl/users/me'), headers: headers);
-      if (response.statusCode == 200) {
-        return jsonDecode(response.body);
-      }
-    } catch (_) {}
-    return {'success': false};
+    return await getCurrentUser();
   }
 
   static Future<Map<String, dynamic>> updateUserProfileOnBackend(Map<String, dynamic> updates) async {

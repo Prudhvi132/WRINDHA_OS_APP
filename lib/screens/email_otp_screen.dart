@@ -148,11 +148,17 @@ class _EmailOtpScreenState extends State<EmailOtpScreen> {
       );
     } else {
       _attemptsCount++;
+      final msg = (res['message'] ?? '').toString();
+      final lower = msg.toLowerCase();
       setState(() {
         _isLoading = false;
-        _errorMessage = _attemptsCount >= 5
-            ? 'Too many failed attempts. Please request a new code.'
-            : (res['message'] ?? 'Invalid verification code. Please try again.');
+        if (_attemptsCount >= 5) {
+          _errorMessage = 'Too many failed attempts. Please request a new code.';
+        } else if (res['statusCode'] == 401 || lower.contains('bearer') || lower.contains('unauthorized')) {
+          _errorMessage = 'Verification failed. Please check the code and try again.';
+        } else {
+          _errorMessage = msg.isNotEmpty ? msg : 'Invalid verification code. Please try again.';
+        }
       });
     }
   }
@@ -363,7 +369,7 @@ class _EmailOtpScreenState extends State<EmailOtpScreen> {
                             final lastChar = cleanDigits.substring(cleanDigits.length - 1);
                             _otpControllers[index].value = TextEditingValue(
                               text: lastChar,
-                              selection: TextSelection.collapsed(offset: 1),
+                              selection: const TextSelection.collapsed(offset: 1),
                             );
                           }
 
