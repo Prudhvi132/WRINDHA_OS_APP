@@ -57,6 +57,18 @@ class AppProvider extends ChangeNotifier {
   bool _isInitialized = false;
   bool get isInitialized => _isInitialized;
 
+  Set<String> _deletedItemIds = {};
+  Set<String> get deletedItemIds => _deletedItemIds;
+
+  Future<void> _saveDeletedItemIds() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('saved_deleted_ids_${_user.id}', _deletedItemIds.toList());
+    } catch (e) {
+      debugPrint('Error saving deleted item IDs: $e');
+    }
+  }
+
   UserProfile _user = UserProfile(
     id: 'u_1',
     name: 'Student User',
@@ -155,6 +167,7 @@ class AppProvider extends ChangeNotifier {
       subscriptionPlan: 'FREE',
     );
     _subscription = UserSubscription.defaultFree('u_guest');
+    _deletedItemIds = {};
     await ApiService.clearSession();
     await AuthApiService.clearSession();
     try {
@@ -294,6 +307,8 @@ class AppProvider extends ChangeNotifier {
   }
 
   void deleteHabit(String id) {
+    _deletedItemIds.add(id);
+    _saveDeletedItemIds();
     _habits.removeWhere((h) => h.id == id);
     _saveHabits();
     _recalculateMetrics();
@@ -336,6 +351,18 @@ class AppProvider extends ChangeNotifier {
   }
 
   void deleteSubject(String id) {
+    _deletedItemIds.add(id);
+    for (var i in _studyItems.where((item) => item.subjectId == id)) {
+      _deletedItemIds.add(i.id);
+    }
+    final childUnits = _studyUnits.where((u) => u.subjectId == id || u.subjectId.toLowerCase() == id.toLowerCase()).toList();
+    for (var u in childUnits) {
+      _deletedItemIds.add(u.id);
+      for (var t in _studyTopics.where((t) => t.unitId == u.id)) {
+        _deletedItemIds.add(t.id);
+      }
+    }
+    _saveDeletedItemIds();
     _subjects.removeWhere((s) => s.id == id);
     _studyItems.removeWhere((item) => item.subjectId == id);
     _saveSubjects();
@@ -367,6 +394,8 @@ class AppProvider extends ChangeNotifier {
   }
 
   void deleteStudyItem(String id) {
+    _deletedItemIds.add(id);
+    _saveDeletedItemIds();
     final idx = _studyItems.indexWhere((item) => item.id == id);
     if (idx != -1) {
       final subId = _studyItems[idx].subjectId;
@@ -470,6 +499,11 @@ class AppProvider extends ChangeNotifier {
   }
 
   void deleteStudyUnit(String unitId) {
+    _deletedItemIds.add(unitId);
+    for (var t in _studyTopics.where((t) => t.unitId == unitId)) {
+      _deletedItemIds.add(t.id);
+    }
+    _saveDeletedItemIds();
     final idx = _studyUnits.indexWhere((u) => u.id == unitId);
     String? subjectId;
     if (idx != -1) {
@@ -516,6 +550,8 @@ class AppProvider extends ChangeNotifier {
   }
 
   void deleteStudyTopic(String topicId) {
+    _deletedItemIds.add(topicId);
+    _saveDeletedItemIds();
     final idx = _studyTopics.indexWhere((t) => t.id == topicId);
     if (idx != -1) {
       final unitId = _studyTopics[idx].unitId;
@@ -568,6 +604,8 @@ class AppProvider extends ChangeNotifier {
   }
 
   void deleteJournalEntry(String id) {
+    _deletedItemIds.add(id);
+    _saveDeletedItemIds();
     _journalEntries.removeWhere((j) => j.id == id);
     _saveJournalEntries();
     notifyListeners();
@@ -617,6 +655,8 @@ class AppProvider extends ChangeNotifier {
   }
 
   void deleteGoal(String id) {
+    _deletedItemIds.add(id);
+    _saveDeletedItemIds();
     _goals.removeWhere((g) => g.id == id);
     _saveGoals();
     notifyListeners();
@@ -626,7 +666,32 @@ class AppProvider extends ChangeNotifier {
   Future<void> fetchGoalsFromBackend() async {
     try {
       final remote = await ApiService.fetchGoals();
-      _goals = remote;
+      final validRemote = remote.where((g) =>
+        !_deletedItemIds.contains(g.id) &&
+        !_deletedItemIds.contains(g.title.trim().toLowerCase())
+      ).toList();
+      final Map<String, Goal> goalMap = {for (var g in _goals) if (!_deletedItemIds.contains(g.id)) g.id: g};
+      for (var rg in validRemote) {
+        Goal? local = goalMap[rg.id];
+        if (local == null) {
+          for (var g in goalMap.values) {
+            if (g.title.trim().toLowerCase() == rg.title.trim().toLowerCase()) {
+              local = g;
+              break;
+            }
+          }
+        }
+        if (local != null) {
+          local.isCompleted = local.isCompleted || rg.isCompleted;
+          goalMap[local.id] = local;
+        } else {
+          goalMap[rg.id] = rg;
+        }
+      }
+      _goals = goalMap.values.where((g) =>
+        !_deletedItemIds.contains(g.id) &&
+        !_deletedItemIds.contains(g.title.trim().toLowerCase())
+      ).toList();
       _saveGoals();
       notifyListeners();
     } catch (_) {}
@@ -684,6 +749,8 @@ class AppProvider extends ChangeNotifier {
   }
 
   void deleteCareerNode(String id) {
+    _deletedItemIds.add(id);
+    _saveDeletedItemIds();
     _careerNodes.removeWhere((n) => n.id == id);
     _saveCareerNodes();
     notifyListeners();
@@ -695,6 +762,9 @@ class AppProvider extends ChangeNotifier {
   // ---------------------------------------------------------------------------
   List<Task> _tasks = [];
   List<Task> get tasks => _tasks;
+
+  List<Task> _priorityMatrixTasks = [];
+  List<Task> get priorityMatrixTasks => _priorityMatrixTasks;
 
   List<CalendarEvent> _calendarEvents = [];
   List<CalendarEvent> get calendarEvents => _calendarEvents;
@@ -1151,6 +1221,14 @@ class AppProvider extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     final uid = _user.id;
 
+    // 0. Deleted Item IDs
+    final deletedList = prefs.getStringList('saved_deleted_ids_$uid');
+    if (deletedList != null) {
+      _deletedItemIds = deletedList.toSet();
+    } else {
+      _deletedItemIds = {};
+    }
+
     // 1. Habits (User-Isolated)
     final habitsJson = prefs.getString('saved_habits_$uid');
     if (habitsJson != null) {
@@ -1229,15 +1307,16 @@ class AppProvider extends ChangeNotifier {
       _journalEntries = [];
     }
 
-    try {
-      final remoteJournals = await ApiService.fetchJournalEntries();
-      if (remoteJournals.isNotEmpty) {
-        _journalEntries = remoteJournals;
-        _saveJournalEntries();
-      }
-    } catch (_) {}
+    // 7. Goals
+    final goalsJson = prefs.getString('saved_goals_$uid');
+    if (goalsJson != null) {
+      final List decoded = jsonDecode(goalsJson);
+      _goals = decoded.map((item) => Goal.fromJson(item)).toList();
+    } else {
+      _goals = [];
+    }
 
-    // 7. Career Roadmap
+    // 8. Career Roadmap
     final careerJson = prefs.getString('saved_career_$uid');
     if (careerJson != null) {
       final List decoded = jsonDecode(careerJson);
@@ -1246,7 +1325,16 @@ class AppProvider extends ChangeNotifier {
       _careerNodes = [];
     }
 
-    // 8. Notifications (User-Isolated)
+    // 8B. Priority Matrix Tasks (Decoupled)
+    final pmTasksJson = prefs.getString('saved_priority_matrix_tasks_$uid');
+    if (pmTasksJson != null) {
+      final List decoded = jsonDecode(pmTasksJson);
+      _priorityMatrixTasks = decoded.map((item) => Task.fromJson(item)).toList();
+    } else {
+      _priorityMatrixTasks = [];
+    }
+
+    // 9. Notifications (User-Isolated)
     final notifsJson = prefs.getString('saved_notifications_$uid');
     if (notifsJson != null) {
       final List decoded = jsonDecode(notifsJson);
@@ -1254,6 +1342,20 @@ class AppProvider extends ChangeNotifier {
     } else {
       _notifications = [];
     }
+
+    // Filter out all previously deleted item IDs
+    _habits.removeWhere((h) => _deletedItemIds.contains(h.id) || _deletedItemIds.contains(h.title.trim().toLowerCase()));
+    _tasks.removeWhere((t) => _deletedItemIds.contains(t.id) || _deletedItemIds.contains(t.title.trim().toLowerCase()));
+    _priorityMatrixTasks.removeWhere((t) => _deletedItemIds.contains(t.id) || _deletedItemIds.contains(t.title.trim().toLowerCase()));
+    _calendarEvents.removeWhere((e) => _deletedItemIds.contains(e.id) || _deletedItemIds.contains(e.title.trim().toLowerCase()));
+    _expenses.removeWhere((e) => _deletedItemIds.contains(e.id) || _deletedItemIds.contains(e.title.trim().toLowerCase()));
+    _subjects.removeWhere((s) => _deletedItemIds.contains(s.id) || _deletedItemIds.contains(s.name.trim().toLowerCase()));
+    _studyItems.removeWhere((i) => _deletedItemIds.contains(i.id) || _deletedItemIds.contains(i.title.trim().toLowerCase()));
+    _studyUnits.removeWhere((u) => _deletedItemIds.contains(u.id) || _deletedItemIds.contains(u.title.trim().toLowerCase()));
+    _studyTopics.removeWhere((t) => _deletedItemIds.contains(t.id) || _deletedItemIds.contains(t.title.trim().toLowerCase()));
+    _journalEntries.removeWhere((j) => _deletedItemIds.contains(j.id) || _deletedItemIds.contains(j.title.trim().toLowerCase()));
+    _careerNodes.removeWhere((n) => _deletedItemIds.contains(n.id) || _deletedItemIds.contains(n.title.trim().toLowerCase()));
+    _goals.removeWhere((g) => _deletedItemIds.contains(g.id) || _deletedItemIds.contains(g.title.trim().toLowerCase()));
 
     recalculateAllSubjectProgress();
     _recalculateMetrics();
@@ -1322,11 +1424,111 @@ class AppProvider extends ChangeNotifier {
   }
 
   void deleteTask(String taskId) {
+    _deletedItemIds.add(taskId);
+    final idx = _tasks.indexWhere((t) => t.id == taskId);
+    if (idx != -1) {
+      _deletedItemIds.add(_tasks[idx].title.trim().toLowerCase());
+    }
+    _saveDeletedItemIds();
     _tasks.removeWhere((t) => t.id == taskId);
     _saveTasks();
     _recalculateMetrics();
     notifyListeners();
     ApiService.deleteTaskOnBackend(taskId);
+  }
+
+  // Priority Matrix Specific Task Operations
+  void addPriorityMatrixTask(
+    String title,
+    String tag, {
+    int priority = 1,
+    DateTime? dueDate,
+    String? dueTime,
+    String? id,
+  }) {
+    final newTask = Task(
+      id: id ?? generateUuidV4(),
+      title: title,
+      category: 'Priority Matrix',
+      tag: tag,
+      dueDateLabel: 'Today',
+      dueDate: dueDate ?? DateTime.now(),
+      dueTime: dueTime ?? '05:00 PM',
+      priority: priority,
+      isPriorityMatrixOnly: true,
+    );
+    _priorityMatrixTasks.add(newTask);
+    _savePriorityMatrixTasks();
+    notifyListeners();
+  }
+
+  void editPriorityMatrixTask(
+    String taskId,
+    String newTitle,
+    int priority,
+    String tag, {
+    DateTime? dueDate,
+    String? dueTime,
+  }) {
+    final index = _priorityMatrixTasks.indexWhere((t) => t.id == taskId);
+    if (index != -1) {
+      _priorityMatrixTasks[index].title = newTitle;
+      _priorityMatrixTasks[index].priority = priority;
+      _priorityMatrixTasks[index].tag = tag;
+      if (dueDate != null) _priorityMatrixTasks[index].dueDate = dueDate;
+      if (dueTime != null) _priorityMatrixTasks[index].dueTime = dueTime;
+      _savePriorityMatrixTasks();
+      notifyListeners();
+    }
+  }
+
+  void togglePriorityMatrixTaskCompletion(String taskId) {
+    final index = _priorityMatrixTasks.indexWhere((t) => t.id == taskId);
+    if (index != -1) {
+      _priorityMatrixTasks[index].isCompleted = !_priorityMatrixTasks[index].isCompleted;
+      if (_priorityMatrixTasks[index].isCompleted) {
+        _priorityMatrixTasks[index].completedDate = DateTime.now();
+        _priorityMatrixTasks[index].dueDateLabel = 'Completed';
+      } else {
+        _priorityMatrixTasks[index].completedDate = null;
+        _priorityMatrixTasks[index].dueDateLabel = 'Today';
+      }
+      _savePriorityMatrixTasks();
+      notifyListeners();
+    }
+  }
+
+  void deletePriorityMatrixTask(String taskId) {
+    _deletedItemIds.add(taskId);
+    final idx = _priorityMatrixTasks.indexWhere((t) => t.id == taskId);
+    if (idx != -1) {
+      _deletedItemIds.add(_priorityMatrixTasks[idx].title.trim().toLowerCase());
+    }
+    _saveDeletedItemIds();
+    _priorityMatrixTasks.removeWhere((t) => t.id == taskId);
+    _savePriorityMatrixTasks();
+    notifyListeners();
+  }
+
+  void clearPriorityMatrixHistory() {
+    for (var t in _priorityMatrixTasks.where((t) => t.isCompleted)) {
+      _deletedItemIds.add(t.id);
+      _deletedItemIds.add(t.title.trim().toLowerCase());
+    }
+    _saveDeletedItemIds();
+    _priorityMatrixTasks.removeWhere((t) => t.isCompleted);
+    _savePriorityMatrixTasks();
+    notifyListeners();
+  }
+
+  Future<void> _savePriorityMatrixTasks() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final jsonList = _priorityMatrixTasks.map((t) => t.toJson()).toList();
+      await prefs.setString('saved_priority_matrix_tasks_${_user.id}', jsonEncode(jsonList));
+    } catch (e) {
+      debugPrint('Error saving priority matrix tasks: $e');
+    }
   }
 
   // Calendar Event Operations
@@ -1381,6 +1583,8 @@ class AppProvider extends ChangeNotifier {
   }
 
   void deleteCalendarEvent(String eventId) {
+    _deletedItemIds.add(eventId);
+    _saveDeletedItemIds();
     _calendarEvents.removeWhere((e) => e.id == eventId);
     _saveEvents();
     notifyListeners();
@@ -1464,6 +1668,20 @@ class AppProvider extends ChangeNotifier {
         'active_streak': _user.activeStreak,
       });
     }
+  }
+
+  void recordFocusSession(int minutes) {
+    if (minutes <= 0) return;
+    _user.focusScore = (_user.focusScore + (minutes * 2)).clamp(0, 100);
+    _recalculateMetrics();
+    recalculateAllSubjectProgress();
+    addNotification(
+      title: 'Focus Session Completed',
+      header: 'Completed',
+      message: 'Logged $minutes minutes of deep focus! Great job staying productive.',
+      colorHex: 0xFF10B981,
+    );
+    notifyListeners();
   }
 
   // Persistence helpers
@@ -1616,6 +1834,8 @@ class AppProvider extends ChangeNotifier {
         syncHabitsFromCloud(),
         syncExpensesFromCloud(),
         syncSubjectsFromCloud(),
+        syncStudyUnitsFromCloud(),
+        syncStudyTopicsFromCloud(),
         syncStudyItemsFromCloud(),
         syncCalendarEventsFromCloud(),
         fetchGoalsFromBackend(),
@@ -1640,17 +1860,38 @@ class AppProvider extends ChangeNotifier {
   Future<void> syncTasksFromCloud() async {
     try {
       final remoteTasks = await ApiService.fetchTasks();
-      if (remoteTasks.isNotEmpty) {
-        final Map<String, Task> taskMap = {for (var t in _tasks) t.id: t};
-        for (var rt in remoteTasks) {
+      final validRemote = remoteTasks.where((t) =>
+        !_deletedItemIds.contains(t.id) &&
+        !_deletedItemIds.contains(t.title.trim().toLowerCase())
+      ).toList();
+      final Map<String, Task> taskMap = {for (var t in _tasks) if (!_deletedItemIds.contains(t.id)) t.id: t};
+      for (var rt in validRemote) {
+        Task? local = taskMap[rt.id];
+        if (local == null) {
+          for (var t in taskMap.values) {
+            if (t.title.trim().toLowerCase() == rt.title.trim().toLowerCase()) {
+              local = t;
+              break;
+            }
+          }
+        }
+        if (local != null) {
+          final isComp = local.isCompleted || rt.isCompleted;
+          local.isCompleted = isComp;
+          if (isComp && local.completedDate == null) {
+            local.completedDate = rt.completedDate ?? DateTime.now();
+            local.dueDateLabel = 'Completed';
+          }
+          taskMap[local.id] = local;
+        } else {
           taskMap[rt.id] = rt;
         }
-        _tasks = taskMap.values.toList();
-      } else if (_tasks.isNotEmpty) {
-        for (final t in _tasks) {
-          ApiService.createTaskOnBackend(t);
-        }
       }
+      _tasks = taskMap.values.where((t) =>
+        !_deletedItemIds.contains(t.id) &&
+        !_deletedItemIds.contains(t.title.trim().toLowerCase()) &&
+        !t.isPriorityMatrixOnly
+      ).toList();
       _saveTasks();
       _recalculateMetrics();
       notifyListeners();
@@ -1662,17 +1903,20 @@ class AppProvider extends ChangeNotifier {
   Future<void> syncHabitsFromCloud() async {
     try {
       final remoteHabits = await ApiService.fetchHabits();
-      if (remoteHabits.isNotEmpty) {
-        final Map<String, Habit> habitMap = {for (var h in _habits) h.id: h};
-        for (var rh in remoteHabits) {
+      final validRemote = remoteHabits.where((h) => !_deletedItemIds.contains(h.id)).toList();
+      final Map<String, Habit> habitMap = {for (var h in _habits) if (!_deletedItemIds.contains(h.id)) h.id: h};
+      for (var rh in validRemote) {
+        final local = habitMap[rh.id];
+        if (local != null) {
+          final mergedHistory = {...local.completionHistory, ...rh.completionHistory}.toList();
+          local.completionHistory = mergedHistory;
+          local.isCompleted = local.isCompleted || rh.isCompleted;
+          habitMap[rh.id] = local;
+        } else {
           habitMap[rh.id] = rh;
         }
-        _habits = habitMap.values.toList();
-      } else if (_habits.isNotEmpty) {
-        for (final h in _habits) {
-          ApiService.createHabitOnBackend(h);
-        }
       }
+      _habits = habitMap.values.where((h) => !_deletedItemIds.contains(h.id)).toList();
       for (final h in _habits) {
         h.recalculateStreaks(DateTime.now());
       }
@@ -1686,17 +1930,12 @@ class AppProvider extends ChangeNotifier {
   Future<void> syncExpensesFromCloud() async {
     try {
       final remoteExpenses = await ApiService.fetchExpenses();
-      if (remoteExpenses.isNotEmpty) {
-        final Map<String, ExpenseTransaction> expMap = {for (var e in _expenses) e.id: e};
-        for (var re in remoteExpenses) {
-          expMap[re.id] = re;
-        }
-        _expenses = expMap.values.toList();
-      } else if (_expenses.isNotEmpty) {
-        for (final e in _expenses) {
-          ApiService.createExpenseOnBackend(e);
-        }
+      final validRemote = remoteExpenses.where((e) => !_deletedItemIds.contains(e.id)).toList();
+      final Map<String, ExpenseTransaction> expMap = {for (var e in _expenses) if (!_deletedItemIds.contains(e.id)) e.id: e};
+      for (var re in validRemote) {
+        expMap[re.id] = re;
       }
+      _expenses = expMap.values.where((e) => !_deletedItemIds.contains(e.id)).toList();
       _saveExpenses();
       notifyListeners();
     } catch (e) {
@@ -1707,17 +1946,18 @@ class AppProvider extends ChangeNotifier {
   Future<void> syncSubjectsFromCloud() async {
     try {
       final remoteSubjects = await ApiService.fetchSubjects();
-      if (remoteSubjects.isNotEmpty) {
-        final Map<String, StudySubject> subMap = {for (var s in _subjects) s.id: s};
-        for (var rs in remoteSubjects) {
+      final validRemote = remoteSubjects.where((s) => !_deletedItemIds.contains(s.id)).toList();
+      final Map<String, StudySubject> subMap = {for (var s in _subjects) if (!_deletedItemIds.contains(s.id)) s.id: s};
+      for (var rs in validRemote) {
+        final local = subMap[rs.id];
+        if (local != null) {
+          local.progress = local.progress > rs.progress ? local.progress : rs.progress;
+          subMap[rs.id] = local;
+        } else {
           subMap[rs.id] = rs;
         }
-        _subjects = subMap.values.toList();
-      } else if (_subjects.isNotEmpty) {
-        for (final s in _subjects) {
-          ApiService.createSubjectOnBackend(s);
-        }
       }
+      _subjects = subMap.values.where((s) => !_deletedItemIds.contains(s.id)).toList();
       recalculateAllSubjectProgress();
       _saveSubjects();
       notifyListeners();
@@ -1729,17 +1969,18 @@ class AppProvider extends ChangeNotifier {
   Future<void> syncStudyItemsFromCloud() async {
     try {
       final remoteItems = await ApiService.fetchStudyItems();
-      if (remoteItems.isNotEmpty) {
-        final Map<String, StudyItem> itemMap = {for (var i in _studyItems) i.id: i};
-        for (var ri in remoteItems) {
+      final validRemote = remoteItems.where((i) => !_deletedItemIds.contains(i.id)).toList();
+      final Map<String, StudyItem> itemMap = {for (var i in _studyItems) if (!_deletedItemIds.contains(i.id)) i.id: i};
+      for (var ri in validRemote) {
+        final local = itemMap[ri.id];
+        if (local != null) {
+          local.isCompleted = local.isCompleted || ri.isCompleted;
+          itemMap[ri.id] = local;
+        } else {
           itemMap[ri.id] = ri;
         }
-        _studyItems = itemMap.values.toList();
-      } else if (_studyItems.isNotEmpty) {
-        for (final i in _studyItems) {
-          ApiService.createStudyItemOnBackend(i);
-        }
       }
+      _studyItems = itemMap.values.where((i) => !_deletedItemIds.contains(i.id)).toList();
       recalculateAllSubjectProgress();
       _saveStudyItems();
       notifyListeners();
@@ -1748,20 +1989,68 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
+  Future<void> syncStudyUnitsFromCloud() async {
+    try {
+      final remoteUnits = await ApiService.fetchStudyUnits();
+      final validRemote = remoteUnits.where((u) => !_deletedItemIds.contains(u.id)).toList();
+      final Map<String, StudyUnit> unitMap = {for (var u in _studyUnits) if (!_deletedItemIds.contains(u.id)) u.id: u};
+      for (var ru in validRemote) {
+        final local = unitMap[ru.id];
+        if (local != null) {
+          local.isCompleted = local.isCompleted || ru.isCompleted;
+          local.progress = local.progress > ru.progress ? local.progress : ru.progress;
+          unitMap[ru.id] = local;
+        } else {
+          unitMap[ru.id] = ru;
+        }
+      }
+      _studyUnits = unitMap.values.where((u) => !_deletedItemIds.contains(u.id)).toList();
+      _saveStudyUnits();
+      recalculateAllSubjectProgress();
+      notifyListeners();
+    } catch (e) {
+      debugPrint('[AppProvider] syncStudyUnitsFromCloud error: $e');
+    }
+  }
+
+  Future<void> syncStudyTopicsFromCloud() async {
+    try {
+      final remoteTopics = await ApiService.fetchStudyTopics();
+      final validRemote = remoteTopics.where((t) => !_deletedItemIds.contains(t.id)).toList();
+      final Map<String, StudyTopic> topicMap = {for (var t in _studyTopics) if (!_deletedItemIds.contains(t.id)) t.id: t};
+      for (var rt in validRemote) {
+        final local = topicMap[rt.id];
+        if (local != null) {
+          local.isCompleted = local.isCompleted || rt.isCompleted;
+          topicMap[rt.id] = local;
+        } else {
+          topicMap[rt.id] = rt;
+        }
+      }
+      _studyTopics = topicMap.values.where((t) => !_deletedItemIds.contains(t.id)).toList();
+      _saveStudyTopics();
+      recalculateAllSubjectProgress();
+      notifyListeners();
+    } catch (e) {
+      debugPrint('[AppProvider] syncStudyTopicsFromCloud error: $e');
+    }
+  }
+
   Future<void> syncCalendarEventsFromCloud() async {
     try {
       final remoteEvents = await ApiService.fetchCalendarEvents();
-      if (remoteEvents.isNotEmpty) {
-        final Map<String, CalendarEvent> evtMap = {for (var e in _calendarEvents) e.id: e};
-        for (var re in remoteEvents) {
+      final validRemote = remoteEvents.where((e) => !_deletedItemIds.contains(e.id)).toList();
+      final Map<String, CalendarEvent> evtMap = {for (var e in _calendarEvents) if (!_deletedItemIds.contains(e.id)) e.id: e};
+      for (var re in validRemote) {
+        final local = evtMap[re.id];
+        if (local != null) {
+          local.isCompleted = local.isCompleted || re.isCompleted;
+          evtMap[re.id] = local;
+        } else {
           evtMap[re.id] = re;
         }
-        _calendarEvents = evtMap.values.toList();
-      } else if (_calendarEvents.isNotEmpty) {
-        for (final e in _calendarEvents) {
-          ApiService.createCalendarEventOnBackend(e);
-        }
       }
+      _calendarEvents = evtMap.values.where((e) => !_deletedItemIds.contains(e.id)).toList();
       _saveEvents();
       notifyListeners();
     } catch (e) {
@@ -1772,15 +2061,34 @@ class AppProvider extends ChangeNotifier {
   Future<void> syncCareerRoadmapFromCloud() async {
     try {
       final remoteNodes = await ApiService.fetchCareerRoadmapNodes();
-      if (remoteNodes.isNotEmpty) {
-        final Map<String, CareerRoadmapNode> nodeMap = {for (var n in _careerNodes) n.id: n};
-        for (var rn in remoteNodes) {
+      final validRemote = remoteNodes.where((n) =>
+        !_deletedItemIds.contains(n.id) &&
+        !_deletedItemIds.contains(n.title.trim().toLowerCase())
+      ).toList();
+      final Map<String, CareerRoadmapNode> nodeMap = {for (var n in _careerNodes) if (!_deletedItemIds.contains(n.id)) n.id: n};
+      for (var rn in validRemote) {
+        CareerRoadmapNode? local = nodeMap[rn.id];
+        if (local == null) {
+          for (var n in nodeMap.values) {
+            if (n.title.trim().toLowerCase() == rn.title.trim().toLowerCase()) {
+              local = n;
+              break;
+            }
+          }
+        }
+        if (local != null) {
+          local.isCompleted = local.isCompleted || rn.isCompleted;
+          nodeMap[local.id] = local;
+        } else {
           nodeMap[rn.id] = rn;
         }
-        _careerNodes = nodeMap.values.toList();
-        _saveCareerNodes();
-        notifyListeners();
       }
+      _careerNodes = nodeMap.values.where((n) =>
+        !_deletedItemIds.contains(n.id) &&
+        !_deletedItemIds.contains(n.title.trim().toLowerCase())
+      ).toList();
+      _saveCareerNodes();
+      notifyListeners();
     } catch (e) {
       debugPrint('[AppProvider] syncCareerRoadmapFromCloud error: $e');
     }
@@ -1789,17 +2097,12 @@ class AppProvider extends ChangeNotifier {
   Future<void> syncJournalEntriesFromCloud() async {
     try {
       final remoteEntries = await ApiService.fetchJournalEntries();
-      if (remoteEntries.isNotEmpty) {
-        final Map<String, JournalEntry> entryMap = {for (var j in _journalEntries) j.id: j};
-        for (var rj in remoteEntries) {
-          entryMap[rj.id] = rj;
-        }
-        _journalEntries = entryMap.values.toList();
-      } else if (_journalEntries.isNotEmpty) {
-        for (final j in _journalEntries) {
-          ApiService.createJournalEntryOnBackend(j);
-        }
+      final validRemote = remoteEntries.where((j) => !_deletedItemIds.contains(j.id)).toList();
+      final Map<String, JournalEntry> entryMap = {for (var j in _journalEntries) if (!_deletedItemIds.contains(j.id)) j.id: j};
+      for (var rj in validRemote) {
+        entryMap[rj.id] = rj;
       }
+      _journalEntries = entryMap.values.where((j) => !_deletedItemIds.contains(j.id)).toList();
       _saveJournalEntries();
       notifyListeners();
     } catch (e) {
