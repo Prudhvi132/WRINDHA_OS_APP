@@ -54,6 +54,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release view v1.2.0-apk || gh release create v1.2.0-apk --title "Wrindha OS v1.2.0 (Build 57) Release APK" --notes "Release APKs for Wrindha OS v1.2.0 (Build 57)"
+          gh release view v1.2.0-apk || gh release create v1.2.0-apk --title "Wrindha OS v1.2.0 (Build 58) Release APK" --notes "Release APKs for Wrindha OS v1.2.0 (Build 58)"
           gh release upload v1.2.0-apk build/app/outputs/flutter-apk/*.apk --clobber
 
