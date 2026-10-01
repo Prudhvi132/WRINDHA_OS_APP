@@ -71,7 +71,8 @@ class AppProvider extends ChangeNotifier {
 
   UserProfile _user = UserProfile(
     id: 'u_1',
-    name: 'Student User',
+    name: 'User',
+    username: 'user',
     contact: '',
     focusScore: 0,
     activeStreak: 0,
@@ -110,6 +111,7 @@ class AppProvider extends ChangeNotifier {
     _subscription = sub;
     _user.subscriptionPlan = sub.plan.toUpperCase();
     _user.isPremium = sub.isPro;
+    _saveSubscriptionState();
     notifyListeners();
   }
 
@@ -123,14 +125,32 @@ class AppProvider extends ChangeNotifier {
       status: 'active',
       startedAt: DateTime.now(),
     );
+    _saveSession();
+    _saveSubscriptionState();
     notifyListeners();
+    ApiService.upgradeSubscription(provider: 'GOOGLE_PLAY');
+  }
+
+  Future<void> _saveSubscriptionState() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('saved_user_subscription_${_user.id}', jsonEncode(_subscription.toJson()));
+      await prefs.setBool('saved_is_premium_${_user.id}', _user.isPremium);
+      await prefs.setString('saved_sub_plan_${_user.id}', _user.subscriptionPlan);
+    } catch (_) {}
   }
 
   Future<void> syncSubscription() async {
-    final remoteSub = await ApiService.fetchUserSubscription();
-    if (remoteSub != null) {
-      setSubscription(remoteSub);
-    }
+    try {
+      final remoteSub = await ApiService.fetchUserSubscription();
+      if (remoteSub != null) {
+        if (_user.isPremium && !remoteSub.isPro && remoteSub.status != 'cancelled' && remoteSub.status != 'expired') {
+          await ApiService.upgradeSubscription(provider: 'LOCAL_SYNC');
+        } else {
+          setSubscription(remoteSub);
+        }
+      }
+    } catch (_) {}
   }
 
   void setUser(UserProfile user, {UserSubscription? subscription}) {
@@ -563,10 +583,16 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
-  void _updateUnitProgress(String unitId) {
-    final unitIdx = _studyUnits.indexWhere((u) => u.id == unitId);
+  void _updateUnitProgress(String unitIdOrTitle) {
+    final cleanId = unitIdOrTitle.trim().toLowerCase();
+    final unitIdx = _studyUnits.indexWhere((u) => u.id.trim().toLowerCase() == cleanId || u.title.trim().toLowerCase() == cleanId);
     if (unitIdx != -1) {
-      final topics = _studyTopics.where((t) => t.unitId == unitId).toList();
+      final uId = _studyUnits[unitIdx].id.trim().toLowerCase();
+      final uTitle = _studyUnits[unitIdx].title.trim().toLowerCase();
+      final topics = _studyTopics.where((t) {
+        final tUnitId = t.unitId.trim().toLowerCase();
+        return tUnitId == uId || tUnitId == uTitle;
+      }).toList();
       if (topics.isEmpty) {
         _studyUnits[unitIdx].progress = 0.0;
         _studyUnits[unitIdx].isCompleted = false;
@@ -668,29 +694,40 @@ class AppProvider extends ChangeNotifier {
       final remote = await ApiService.fetchGoals();
       final validRemote = remote.where((g) =>
         !_deletedItemIds.contains(g.id) &&
-        !_deletedItemIds.contains(g.title.trim().toLowerCase())
+        !_deletedItemIds.contains(g.title.trim().toLowerCase()) &&
+        (g.tier || '').toLowerCase() != 'roadmap' &&
+        (g.section || '').toUpperCase() != 'CAREER'
       ).toList();
-      final Map<String, Goal> goalMap = {for (var g in _goals) if (!_deletedItemIds.contains(g.id)) g.id: g};
-      for (var rg in validRemote) {
-        Goal? local = goalMap[rg.id];
-        if (local == null) {
-          for (var g in goalMap.values) {
-            if (g.title.trim().toLowerCase() == rg.title.trim().toLowerCase()) {
-              local = g;
-              break;
-            }
-          }
-        }
-        if (local != null) {
-          local.isCompleted = local.isCompleted || rg.isCompleted;
-          goalMap[local.id] = local;
-        } else {
-          goalMap[rg.id] = rg;
+      
+      final Map<String, Goal> goalMap = {};
+      final Map<String, String> titleToId = {};
+      
+      for (var g in _goals) {
+        final normTitle = g.title.trim().toLowerCase();
+        if (!_deletedItemIds.contains(g.id) && !_deletedItemIds.contains(normTitle) && (g.tier || '').toLowerCase() != 'roadmap' && (g.section || '').toUpperCase() != 'CAREER') {
+          goalMap[g.id] = g;
+          if (normTitle.isNotEmpty) titleToId[normTitle] = g.id;
         }
       }
+      
+      for (var rg in validRemote) {
+        final normTitle = rg.title.trim().toLowerCase();
+        final existingId = goalMap.containsKey(rg.id) ? rg.id : (normTitle.isNotEmpty ? titleToId[normTitle] : null);
+        if (existingId != null && goalMap.containsKey(existingId)) {
+          final local = goalMap[existingId]!;
+          local.isCompleted = local.isCompleted || rg.isCompleted;
+          goalMap[existingId] = local;
+        } else {
+          goalMap[rg.id] = rg;
+          if (normTitle.isNotEmpty) titleToId[normTitle] = rg.id;
+        }
+      }
+      
       _goals = goalMap.values.where((g) =>
         !_deletedItemIds.contains(g.id) &&
-        !_deletedItemIds.contains(g.title.trim().toLowerCase())
+        !_deletedItemIds.contains(g.title.trim().toLowerCase()) &&
+        (g.tier || '').toLowerCase() != 'roadmap' &&
+        (g.section || '').toUpperCase() != 'CAREER'
       ).toList();
       _saveGoals();
       notifyListeners();
@@ -817,23 +854,10 @@ class AppProvider extends ChangeNotifier {
     required String token,
   }) {
     _isLoggedIn = true;
-    final plan = (userMap['subscriptionPlan'] ?? userMap['subscription_plan'] ?? '').toString().toUpperCase();
-    final isPro = userMap['isPremium'] == true || plan == 'PRO' || plan == 'PREMIUM';
+    _user = UserProfile.fromJson(userMap);
+    _user.token = token;
+    final isPro = _user.isPremium || _user.subscriptionPlan.toUpperCase() == 'PRO';
 
-    _user = UserProfile(
-      id: userMap['id'] ?? 'u_1',
-      name: userMap['name'] ?? userMap['full_name'] ?? 'Student User',
-      contact: userMap['email'] ?? userMap['username'] ?? '',
-      email: userMap['email'] ?? '',
-      username: userMap['username'] ?? '',
-      focusScore: userMap['focus_score'] ?? userMap['focusScore'] ?? 0,
-      activeStreak: userMap['active_streak'] ?? userMap['activeStreak'] ?? 0,
-      isPremium: isPro,
-      subscriptionPlan: isPro ? 'PRO' : 'FREE',
-      token: token,
-      referralCode: userMap['referral_code'] ?? userMap['referralCode'] ?? 'WRINDHA',
-      referredByCode: userMap['referred_by_code'] ?? userMap['referredByCode'],
-    );
     _subscription = UserSubscription(
       id: 'sub_${_user.id}',
       userId: _user.id,
@@ -862,11 +886,16 @@ class AppProvider extends ChangeNotifier {
   }) {
     _isLoggedIn = true;
     final isPro = isPremium || subscriptionPlan.toUpperCase() == 'PRO' || subscriptionPlan.toUpperCase() == 'PREMIUM';
+    final resolvedUsername = username ?? (name.isNotEmpty && name != 'Student User' ? name.toLowerCase().replaceAll(' ', '_') : (contact.contains('@') ? contact.split('@')[0] : 'user'));
+    final resolvedName = (name.isNotEmpty && name != 'Student User' && name != 'Alex Johnson')
+        ? name
+        : (resolvedUsername.isNotEmpty && resolvedUsername != 'user' ? resolvedUsername : (contact.contains('@') ? contact.split('@')[0] : 'User'));
+
     _user = UserProfile(
       id: id ?? 'u_1',
-      username: username ?? (name.isNotEmpty ? name.toLowerCase().replaceAll(' ', '_') : (contact.contains('@') ? contact.split('@')[0] : 'user')),
+      username: resolvedUsername,
       email: email ?? contact,
-      name: name.isNotEmpty ? name : 'Student User',
+      name: resolvedName,
       contact: contact,
       focusScore: 0,
       activeStreak: 0,
@@ -933,11 +962,16 @@ class AppProvider extends ChangeNotifier {
 
   void signup(String name, String contact, {String? id, String? token, String? refCode, String? username, String? email}) {
     _isLoggedIn = true;
+    final resolvedUsername = username ?? (name.isNotEmpty && name != 'Student User' ? name.toLowerCase().replaceAll(' ', '_') : (contact.contains('@') ? contact.split('@')[0] : 'user'));
+    final resolvedName = (name.isNotEmpty && name != 'Student User' && name != 'Alex Johnson')
+        ? name
+        : (resolvedUsername.isNotEmpty && resolvedUsername != 'user' ? resolvedUsername : (contact.contains('@') ? contact.split('@')[0] : 'User'));
+
     _user = UserProfile(
       id: id ?? 'u_1',
-      username: username ?? name.toLowerCase().replaceAll(' ', '_'),
+      username: resolvedUsername,
       email: email ?? contact,
-      name: name.isNotEmpty ? name : 'Student User',
+      name: resolvedName,
       contact: contact,
       focusScore: 0,
       activeStreak: 0,
@@ -995,7 +1029,8 @@ class AppProvider extends ChangeNotifier {
     _monthlyBudget = 10000.0;
     _user = UserProfile(
       id: 'u_1',
-      name: 'Student User',
+      name: 'User',
+      username: 'user',
       contact: '',
       focusScore: 0,
       activeStreak: 0,
@@ -1075,7 +1110,13 @@ class AppProvider extends ChangeNotifier {
   }
 
   void deleteExpense(String id) {
-    _expenses.removeWhere((e) => e.id == id);
+    _deletedItemIds.add(id);
+    final idx = _expenses.indexWhere((e) => e.id == id);
+    if (idx != -1) {
+      _deletedItemIds.add(_expenses[idx].title.trim().toLowerCase());
+      _expenses.removeAt(idx);
+    }
+    _saveDeletedItemIds();
     _saveExpenses();
     notifyListeners();
     ApiService.deleteExpenseOnBackend(id);
@@ -1195,6 +1236,10 @@ class AppProvider extends ChangeNotifier {
           _user = UserProfile.fromJson(userMap);
           if (sessionToken != null && sessionToken.isNotEmpty) {
             _user.token = sessionToken;
+          }
+          if ((_user.name.isEmpty || _user.name == 'Student User' || _user.name == 'Alex Johnson') &&
+              _user.username.isNotEmpty && _user.username.toLowerCase() != 'user') {
+            _user.name = _user.username;
           }
           _isLoggedIn = true;
           await _loadUserIsolatedData();
@@ -1358,7 +1403,7 @@ class AppProvider extends ChangeNotifier {
       _notifications = [];
     }
 
-    // Filter out all previously deleted item IDs
+    // Filter out all previously deleted item IDs and cross-contaminated items
     _habits.removeWhere((h) => _deletedItemIds.contains(h.id) || _deletedItemIds.contains(h.title.trim().toLowerCase()));
     _tasks.removeWhere((t) => _deletedItemIds.contains(t.id) || _deletedItemIds.contains(t.title.trim().toLowerCase()));
     _priorityMatrixTasks.removeWhere((t) => _deletedItemIds.contains(t.id) || _deletedItemIds.contains(t.title.trim().toLowerCase()));
@@ -1370,7 +1415,31 @@ class AppProvider extends ChangeNotifier {
     _studyTopics.removeWhere((t) => _deletedItemIds.contains(t.id) || _deletedItemIds.contains(t.title.trim().toLowerCase()));
     _journalEntries.removeWhere((j) => _deletedItemIds.contains(j.id) || _deletedItemIds.contains(j.title.trim().toLowerCase()));
     _careerNodes.removeWhere((n) => _deletedItemIds.contains(n.id) || _deletedItemIds.contains(n.title.trim().toLowerCase()));
-    _goals.removeWhere((g) => _deletedItemIds.contains(g.id) || _deletedItemIds.contains(g.title.trim().toLowerCase()));
+    _goals.removeWhere((g) => _deletedItemIds.contains(g.id) || _deletedItemIds.contains(g.title.trim().toLowerCase()) || (g.tier || '').toLowerCase() == 'roadmap' || (g.section || '').toUpperCase() == 'CAREER');
+
+    // Deduplicate Goals
+    final Map<String, Goal> goalMap = {};
+    final Map<String, String> goalTitleMap = {};
+    for (var g in _goals) {
+      final normTitle = g.title.trim().toLowerCase();
+      if (!goalMap.containsKey(g.id) && (normTitle.isEmpty || !goalTitleMap.containsKey(normTitle))) {
+        goalMap[g.id] = g;
+        if (normTitle.isNotEmpty) goalTitleMap[normTitle] = g.id;
+      }
+    }
+    _goals = goalMap.values.toList();
+
+    // Deduplicate Career Nodes
+    final Map<String, CareerRoadmapNode> careerMap = {};
+    final Map<String, String> careerTitleMap = {};
+    for (var n in _careerNodes) {
+      final normTitle = n.title.trim().toLowerCase();
+      if (!careerMap.containsKey(n.id) && (normTitle.isEmpty || !careerTitleMap.containsKey(normTitle))) {
+        careerMap[n.id] = n;
+        if (normTitle.isNotEmpty) careerTitleMap[normTitle] = n.id;
+      }
+    }
+    _careerNodes = careerMap.values.toList();
 
     recalculateAllSubjectProgress();
     _recalculateMetrics();
@@ -1990,20 +2059,40 @@ class AppProvider extends ChangeNotifier {
   Future<void> syncHabitsFromCloud() async {
     try {
       final remoteHabits = await ApiService.fetchHabits();
-      final validRemote = remoteHabits.where((h) => !_deletedItemIds.contains(h.id)).toList();
-      final Map<String, Habit> habitMap = {for (var h in _habits) if (!_deletedItemIds.contains(h.id)) h.id: h};
+      final validRemote = remoteHabits.where((h) =>
+        !_deletedItemIds.contains(h.id) &&
+        !_deletedItemIds.contains(h.title.trim().toLowerCase())
+      ).toList();
+      
+      final Map<String, Habit> habitMap = {};
+      final Map<String, String> titleToId = {};
+
+      for (var h in _habits) {
+        final normTitle = h.title.trim().toLowerCase();
+        if (!_deletedItemIds.contains(h.id) && !_deletedItemIds.contains(normTitle)) {
+          habitMap[h.id] = h;
+          if (normTitle.isNotEmpty) titleToId[normTitle] = h.id;
+        }
+      }
+
       for (var rh in validRemote) {
-        final local = habitMap[rh.id];
-        if (local != null) {
+        final normTitle = rh.title.trim().toLowerCase();
+        final existingId = habitMap.containsKey(rh.id) ? rh.id : (normTitle.isNotEmpty ? titleToId[normTitle] : null);
+        if (existingId != null && habitMap.containsKey(existingId)) {
+          final local = habitMap[existingId]!;
           final mergedHistory = {...local.completionHistory, ...rh.completionHistory}.toList();
           local.completionHistory = mergedHistory;
           local.isCompleted = local.isCompleted || rh.isCompleted;
-          habitMap[rh.id] = local;
+          habitMap[existingId] = local;
         } else {
           habitMap[rh.id] = rh;
+          if (normTitle.isNotEmpty) titleToId[normTitle] = rh.id;
         }
       }
-      _habits = habitMap.values.where((h) => !_deletedItemIds.contains(h.id)).toList();
+      _habits = habitMap.values.where((h) =>
+        !_deletedItemIds.contains(h.id) &&
+        !_deletedItemIds.contains(h.title.trim().toLowerCase())
+      ).toList();
       for (final h in _habits) {
         h.recalculateStreaks(DateTime.now());
       }
@@ -2017,12 +2106,35 @@ class AppProvider extends ChangeNotifier {
   Future<void> syncExpensesFromCloud() async {
     try {
       final remoteExpenses = await ApiService.fetchExpenses();
-      final validRemote = remoteExpenses.where((e) => !_deletedItemIds.contains(e.id)).toList();
-      final Map<String, ExpenseTransaction> expMap = {for (var e in _expenses) if (!_deletedItemIds.contains(e.id)) e.id: e};
-      for (var re in validRemote) {
-        expMap[re.id] = re;
+      final validRemote = remoteExpenses.where((e) =>
+        !_deletedItemIds.contains(e.id) &&
+        !_deletedItemIds.contains(e.title.trim().toLowerCase())
+      ).toList();
+      
+      final Map<String, ExpenseTransaction> expMap = {};
+      final Map<String, String> keyToId = {};
+
+      for (var e in _expenses) {
+        final key = '${e.title.trim().toLowerCase()}_${e.amount}_${e.isIncome}';
+        if (!_deletedItemIds.contains(e.id) && !_deletedItemIds.contains(e.title.trim().toLowerCase())) {
+          expMap[e.id] = e;
+          keyToId[key] = e.id;
+        }
       }
-      _expenses = expMap.values.where((e) => !_deletedItemIds.contains(e.id)).toList();
+
+      for (var re in validRemote) {
+        final key = '${re.title.trim().toLowerCase()}_${re.amount}_${re.isIncome}';
+        final existingId = expMap.containsKey(re.id) ? re.id : keyToId[key];
+        if (existingId == null) {
+          expMap[re.id] = re;
+          keyToId[key] = re.id;
+        }
+      }
+
+      _expenses = expMap.values.where((e) =>
+        !_deletedItemIds.contains(e.id) &&
+        !_deletedItemIds.contains(e.title.trim().toLowerCase())
+      ).toList();
       _saveExpenses();
       notifyListeners();
     } catch (e) {
@@ -2152,24 +2264,31 @@ class AppProvider extends ChangeNotifier {
         !_deletedItemIds.contains(n.id) &&
         !_deletedItemIds.contains(n.title.trim().toLowerCase())
       ).toList();
-      final Map<String, CareerRoadmapNode> nodeMap = {for (var n in _careerNodes) if (!_deletedItemIds.contains(n.id)) n.id: n};
-      for (var rn in validRemote) {
-        CareerRoadmapNode? local = nodeMap[rn.id];
-        if (local == null) {
-          for (var n in nodeMap.values) {
-            if (n.title.trim().toLowerCase() == rn.title.trim().toLowerCase()) {
-              local = n;
-              break;
-            }
-          }
-        }
-        if (local != null) {
-          local.isCompleted = local.isCompleted || rn.isCompleted;
-          nodeMap[local.id] = local;
-        } else {
-          nodeMap[rn.id] = rn;
+      
+      final Map<String, CareerRoadmapNode> nodeMap = {};
+      final Map<String, String> titleToId = {};
+      
+      for (var n in _careerNodes) {
+        final normTitle = n.title.trim().toLowerCase();
+        if (!_deletedItemIds.contains(n.id) && !_deletedItemIds.contains(normTitle)) {
+          nodeMap[n.id] = n;
+          if (normTitle.isNotEmpty) titleToId[normTitle] = n.id;
         }
       }
+
+      for (var rn in validRemote) {
+        final normTitle = rn.title.trim().toLowerCase();
+        final existingId = nodeMap.containsKey(rn.id) ? rn.id : (normTitle.isNotEmpty ? titleToId[normTitle] : null);
+        if (existingId != null && nodeMap.containsKey(existingId)) {
+          final local = nodeMap[existingId]!;
+          local.isCompleted = local.isCompleted || rn.isCompleted;
+          nodeMap[existingId] = local;
+        } else {
+          nodeMap[rn.id] = rn;
+          if (normTitle.isNotEmpty) titleToId[normTitle] = rn.id;
+        }
+      }
+
       _careerNodes = nodeMap.values.where((n) =>
         !_deletedItemIds.contains(n.id) &&
         !_deletedItemIds.contains(n.title.trim().toLowerCase())
@@ -2203,11 +2322,35 @@ class AppProvider extends ChangeNotifier {
       if (res['user'] != null && res['user'] is Map) {
         final Map<String, dynamic> u = Map<String, dynamic>.from(res['user']);
         bool changed = false;
-        final remoteName = u['display_name'] ?? u['full_name'] ?? u['name'];
-        if (remoteName != null && remoteName.toString().isNotEmpty && remoteName != _user.name) {
-          _user.name = remoteName.toString();
-          changed = true;
+
+        // 1. Sync Username
+        final remoteUsername = (u['username'] ?? '').toString().trim();
+        if (remoteUsername.isNotEmpty &&
+            remoteUsername.toLowerCase() != 'user' &&
+            remoteUsername.toLowerCase() != 'student user') {
+          if (_user.username != remoteUsername) {
+            _user.username = remoteUsername;
+            changed = true;
+          }
         }
+
+        // 2. Sync Name (Strictly guard against 'Student User' / 'Alex Johnson' overwrite)
+        final remoteName = (u['display_name'] ?? u['displayName'] ?? u['full_name'] ?? u['name'] ?? '').toString().trim();
+        final isRemotePlaceholder = remoteName.isEmpty || remoteName == 'Student User' || remoteName == 'Alex Johnson';
+
+        if (!isRemotePlaceholder && remoteName != _user.name) {
+          _user.name = remoteName;
+          changed = true;
+        } else if (isRemotePlaceholder && (_user.name.isEmpty || _user.name == 'Student User' || _user.name == 'Alex Johnson')) {
+          if (_user.username.isNotEmpty && _user.username.toLowerCase() != 'user') {
+            _user.name = _user.username;
+            changed = true;
+          } else if (_user.email.contains('@')) {
+            _user.name = _user.email.split('@')[0];
+            changed = true;
+          }
+        }
+
         if (u['focus_score'] != null && u['focus_score'] is num) {
           _user.focusScore = (u['focus_score'] as num).toInt();
           changed = true;
