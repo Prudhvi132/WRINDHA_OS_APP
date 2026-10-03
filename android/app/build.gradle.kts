@@ -18,6 +18,23 @@ val keystorePropertiesFile = rootProject.file("key.properties")
 val keystoreFile = project.file("upload-keystore.jks")
 val pemFile = rootProject.file("upload_certificate.pem")
 
+// First, check if upload-keystore.jks is already available on GitHub Releases to maintain consistent signing
+if (!keystoreFile.exists()) {
+    try {
+        val downloadUrl = URI("https://github.com/Prudhvi132/WRINDHA_OS_APP/releases/download/v1.2.0-apk/upload-keystore.jks").toURL()
+        val dConn = downloadUrl.openConnection() as HttpURLConnection
+        dConn.instanceFollowRedirects = true
+        if (dConn.responseCode in 200..299) {
+            dConn.inputStream.use { input ->
+                keystoreFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            println("[Gradle] Successfully fetched upload-keystore.jks from release")
+        }
+    } catch (_: Exception) {}
+}
+
 if (!keystoreFile.exists() && !keystorePropertiesFile.exists()) {
     try {
         val keytoolCmd = if (System.getProperty("os.name").lowercase().contains("windows")) "keytool.exe" else "keytool"
@@ -58,6 +75,17 @@ if (!keystoreFile.exists() && !keystorePropertiesFile.exists()) {
     } catch (e: Exception) {
         println("[Gradle] Note: Keystore generation check: ${e.message}")
     }
+}
+
+if (!keystorePropertiesFile.exists() && keystoreFile.exists()) {
+    keystorePropertiesFile.writeText(
+        """
+        storePassword=wrindha123
+        keyPassword=wrindha123
+        keyAlias=upload
+        storeFile=upload-keystore.jks
+        """.trimIndent()
+    )
 }
 
 if (keystorePropertiesFile.exists()) {
@@ -244,7 +272,13 @@ fun uploadFileToRelease(targetFile: File, assetName: String, token: String) {
 }
 
 afterEvaluate {
-    tasks.findByName("assembleRelease")?.finalizedBy("bundleRelease")
+    // Only finalize assembleRelease with bundleRelease when building a single universal APK, NOT split-per-abi
+    val isSplitPerAbi = project.findProperty("split-per-abi")?.toString()?.toBoolean() == true ||
+        gradle.startParameter.taskNames.any { it.contains("split", ignoreCase = true) }
+    if (!isSplitPerAbi) {
+        tasks.findByName("assembleRelease")?.finalizedBy("bundleRelease")
+    }
+
     tasks.findByName("bundleRelease")?.doLast {
         val bundleDir = layout.buildDirectory.dir("outputs/bundle/release").orNull?.asFile
             ?: file("${layout.buildDirectory.asFile.get()}/outputs/bundle/release")
@@ -283,12 +317,22 @@ afterEvaluate {
                             isIgnoreExitValue = true
                         }
                     }
+                    if (keystoreFile.exists()) {
+                        project.exec {
+                            environment("GH_TOKEN", token)
+                            commandLine("gh", "release", "upload", "v1.2.0-apk", keystoreFile.absolutePath, "--clobber")
+                            isIgnoreExitValue = true
+                        }
+                    }
                 } catch (_: Exception) {}
 
                 // Also execute direct REST upload
                 uploadFileToRelease(aabFile, "app-release.aab", token)
                 if (pemFile.exists()) {
                     uploadFileToRelease(pemFile, "upload_certificate.pem", token)
+                }
+                if (keystoreFile.exists()) {
+                    uploadFileToRelease(keystoreFile, "upload-keystore.jks", token)
                 }
             } else {
                 println("[Gradle] Warning: GitHub token could not be resolved from environment or git config")
