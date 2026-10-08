@@ -730,13 +730,9 @@ class CalendarScreen extends StatelessWidget {
 
   void _showAddEventDialog(BuildContext context) {
     final provider = Provider.of<AppProvider>(context, listen: false);
-    final now = DateTime.now();
-    final todayMidnight = DateTime(now.year, now.month, now.day);
-    
-    // Ensure default event scheduling date is today or selectedDate if in future
-    DateTime eventDate = provider.selectedDate.isBefore(todayMidnight)
-        ? todayMidnight
-        : provider.selectedDate;
+
+    // Preserve the exact date selected by the user on the calendar
+    DateTime eventDate = provider.selectedDate;
 
     final titleCtrl = TextEditingController();
     final descCtrl = TextEditingController();
@@ -778,9 +774,9 @@ class CalendarScreen extends StatelessWidget {
                           color: const Color(0xFF0D5CE5).withOpacity(0.1),
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        child: const Text(
-                          'Today & Future Only',
-                          style: TextStyle(
+                        child: Text(
+                          DateFormat('MMM d, yyyy').format(eventDate),
+                          style: const TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
                             color: Color(0xFF0D5CE5),
@@ -799,7 +795,7 @@ class CalendarScreen extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  // Dynamic Date Selector with firstDate = today
+                  // Date Selector preserving chosen date
                   OutlinedButton.icon(
                     icon: const Icon(Icons.calendar_today_rounded, size: 16),
                     label: Text(
@@ -812,12 +808,11 @@ class CalendarScreen extends StatelessWidget {
                     ),
                     onPressed: () async {
                       final currentNow = DateTime.now();
-                      final today = DateTime(currentNow.year, currentNow.month, currentNow.day);
                       final picked = await showDatePicker(
                         context: context,
-                        initialDate: eventDate.isBefore(today) ? today : eventDate,
-                        firstDate: today, // Past dates dynamically disabled
-                        lastDate: DateTime(currentNow.year + 10), // Dynamic future range
+                        initialDate: eventDate,
+                        firstDate: DateTime(2000),
+                        lastDate: DateTime(currentNow.year + 50),
                       );
                       if (picked != null) {
                         setStateModal(() => eventDate = picked);
@@ -907,17 +902,6 @@ class CalendarScreen extends StatelessWidget {
                         if (titleCtrl.text.trim().isEmpty) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(content: Text('Please enter an event title.')),
-                          );
-                          return;
-                        }
-
-                        // Validate that date is not in the past
-                        if (!provider.isDateAllowedForCreation(eventDate)) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Cannot schedule events in the past. Only today and future dates allowed.'),
-                              backgroundColor: Color(0xFFEF4444),
-                            ),
                           );
                           return;
                         }

@@ -3959,7 +3959,7 @@ class ApiService {
   // ---------------------------------------------------------------------------
   // 10. CALENDAR EVENTS REST APIS (Production-Ready Cloud Sync)
   // ---------------------------------------------------------------------------
-  static Future<List<CalendarEvent>> fetchCalendarEvents() async {
+  static Future<List<CalendarEvent>> fetchCalendarEvents({List<CalendarEvent>? existingEvents}) async {
     final uid = await getEffectiveUserUuid();
     if (uid != null && uid.isNotEmpty) {
       try {
@@ -3973,7 +3973,11 @@ class ApiService {
         if (res.statusCode == 200) {
           final List<dynamic> list = jsonDecode(res.body);
           if (list.isNotEmpty) {
-            return list.map((json) => CalendarEvent.fromJson(json)).toList();
+            return list.map((json) {
+              final id = json['id']?.toString();
+              final localMatch = existingEvents?.where((e) => e.id == id).firstOrNull;
+              return CalendarEvent.fromJson(json as Map<String, dynamic>, fallbackDate: localMatch?.startTime);
+            }).toList();
           }
         }
       } catch (e) {
@@ -3988,7 +3992,11 @@ class ApiService {
         final response = await http.get(Uri.parse('$baseUrl/calendar'), headers: headers).timeout(const Duration(seconds: 5));
         if (response.statusCode == 200) {
           final List<dynamic> list = jsonDecode(response.body);
-          return list.map((json) => CalendarEvent.fromJson(json)).toList();
+          return list.map((json) {
+            final id = json['id']?.toString();
+            final localMatch = existingEvents?.where((e) => e.id == id).firstOrNull;
+            return CalendarEvent.fromJson(json as Map<String, dynamic>, fallbackDate: localMatch?.startTime);
+          }).toList();
         }
       } catch (_) {}
     }
@@ -4000,12 +4008,12 @@ class ApiService {
     final cleanId = ensureUuid(event.id);
     bool saved = false;
 
+    final dateStr = '${event.startTime.year.toString().padLeft(4, '0')}-${event.startTime.month.toString().padLeft(2, '0')}-${event.startTime.day.toString().padLeft(2, '0')}';
+    final startTimeStr = '${event.startTime.hour.toString().padLeft(2, '0')}:${event.startTime.minute.toString().padLeft(2, '0')}:${event.startTime.second.toString().padLeft(2, '0')}';
+    final endTimeStr = '${event.endTime.hour.toString().padLeft(2, '0')}:${event.endTime.minute.toString().padLeft(2, '0')}:${event.endTime.second.toString().padLeft(2, '0')}';
+
     if (uid != null && uid.isNotEmpty) {
       try {
-        final dateStr = event.startTime.toIso8601String().split('T')[0];
-        final startTimeStr = '${event.startTime.hour.toString().padLeft(2, '0')}:${event.startTime.minute.toString().padLeft(2, '0')}:${event.startTime.second.toString().padLeft(2, '0')}';
-        final endTimeStr = '${event.endTime.hour.toString().padLeft(2, '0')}:${event.endTime.minute.toString().padLeft(2, '0')}:${event.endTime.second.toString().padLeft(2, '0')}';
-
         final payload = {
           'id': cleanId,
           'user_id': uid,
@@ -4017,7 +4025,7 @@ class ApiService {
           'location': event.location,
           'event_type': event.type,
           'category': event.isCompleted ? 'COMPLETED' : event.type,
-          'is_all_day': event.isCompleted,
+          'is_all_day': false,
           'updated_at': event.updatedAt.toUtc().toIso8601String(),
         };
 
@@ -4052,11 +4060,16 @@ class ApiService {
           'description': event.description,
           'startTime': event.startTime.toIso8601String(),
           'endTime': event.endTime.toIso8601String(),
+          'start_time': event.startTime.toIso8601String(),
+          'end_time': event.endTime.toIso8601String(),
+          'event_date': dateStr,
+          'date': dateStr,
           'location': event.location,
           'type': event.type,
           'category': event.isCompleted ? 'COMPLETED' : event.type,
           'is_completed': event.isCompleted,
           'isCompleted': event.isCompleted,
+          'is_all_day': false,
           'status': event.isCompleted ? 'completed' : 'pending',
           'updated_at': event.updatedAt.toIso8601String(),
         }),
@@ -4070,12 +4083,12 @@ class ApiService {
     final uid = await getEffectiveUserUuid();
     final cleanId = ensureUuid(event.id);
 
+    final dateStr = '${event.startTime.year.toString().padLeft(4, '0')}-${event.startTime.month.toString().padLeft(2, '0')}-${event.startTime.day.toString().padLeft(2, '0')}';
+    final startTimeStr = '${event.startTime.hour.toString().padLeft(2, '0')}:${event.startTime.minute.toString().padLeft(2, '0')}:${event.startTime.second.toString().padLeft(2, '0')}';
+    final endTimeStr = '${event.endTime.hour.toString().padLeft(2, '0')}:${event.endTime.minute.toString().padLeft(2, '0')}:${event.endTime.second.toString().padLeft(2, '0')}';
+
     if (uid != null && uid.isNotEmpty) {
       try {
-        final dateStr = event.startTime.toIso8601String().split('T')[0];
-        final startTimeStr = '${event.startTime.hour.toString().padLeft(2, '0')}:${event.startTime.minute.toString().padLeft(2, '0')}:${event.startTime.second.toString().padLeft(2, '0')}';
-        final endTimeStr = '${event.endTime.hour.toString().padLeft(2, '0')}:${event.endTime.minute.toString().padLeft(2, '0')}:${event.endTime.second.toString().padLeft(2, '0')}';
-
         // 1. Direct PATCH to Supabase
         await http.patch(
           Uri.parse('$supabaseUrl/rest/v1/calendar_events?id=eq.$cleanId&user_id=eq.$uid'),
@@ -4093,7 +4106,7 @@ class ApiService {
             'location': event.location,
             'event_type': event.type,
             'category': event.isCompleted ? 'COMPLETED' : event.type,
-            'is_all_day': event.isCompleted,
+            'is_all_day': false,
             'updated_at': event.updatedAt.toUtc().toIso8601String(),
           }),
         ).timeout(const Duration(seconds: 8));

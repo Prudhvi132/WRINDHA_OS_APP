@@ -336,6 +336,7 @@ class CalendarEvent {
   String category;
   bool isCompleted;
   DateTime updatedAt;
+  bool hasExplicitEventDate;
 
   CalendarEvent({
     required this.id,
@@ -348,6 +349,7 @@ class CalendarEvent {
     String? category,
     this.isCompleted = false,
     DateTime? updatedAt,
+    this.hasExplicitEventDate = true,
   })  : category = (category != null && category.isNotEmpty) ? category : type,
         updatedAt = updatedAt ?? DateTime.now();
 
@@ -362,6 +364,12 @@ class CalendarEvent {
         'start_time': startTime.toIso8601String(),
         'endTime': endTime.toIso8601String(),
         'end_time': endTime.toIso8601String(),
+        'event_date': '${startTime.year.toString().padLeft(4, '0')}-${startTime.month.toString().padLeft(2, '0')}-${startTime.day.toString().padLeft(2, '0')}',
+        'eventDate': '${startTime.year.toString().padLeft(4, '0')}-${startTime.month.toString().padLeft(2, '0')}-${startTime.day.toString().padLeft(2, '0')}',
+        'date': '${startTime.year.toString().padLeft(4, '0')}-${startTime.month.toString().padLeft(2, '0')}-${startTime.day.toString().padLeft(2, '0')}',
+        'year': startTime.year,
+        'month': startTime.month,
+        'day': startTime.day,
         'location': location,
         'type': type,
         'event_type': type,
@@ -369,57 +377,152 @@ class CalendarEvent {
         'event_category': isCompleted ? 'COMPLETED' : category,
         'isCompleted': isCompleted,
         'is_completed': isCompleted,
-        'is_all_day': isCompleted,
+        'is_all_day': false,
         'status': isCompleted ? 'completed' : 'pending',
         'updated_at': updatedAt.toIso8601String(),
       };
 
-  factory CalendarEvent.fromJson(Map<String, dynamic> json) {
-    DateTime parseDateTimeCombined(dynamic primaryTimeVal, dynamic eventDateVal, DateTime fallback) {
-      DateTime baseDate = fallback;
+  factory CalendarEvent.fromJson(Map<String, dynamic> json, {DateTime? fallbackDate}) {
+    DateTime? authDate;
+    bool explicitDateFound = false;
 
-      if (eventDateVal != null && eventDateVal.toString().trim().isNotEmpty) {
-        final dStr = eventDateVal.toString().trim();
+    // 1. Authoritative check on explicit event_date, eventDate, or date
+    final dynamic rawDateVal = json['event_date'] ?? json['eventDate'] ?? json['date'] ?? json['target_date'] ?? json['start_date'];
+    if (rawDateVal != null && rawDateVal.toString().trim().isNotEmpty) {
+      final dStr = rawDateVal.toString().trim();
+      final dateMatch = RegExp(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})').firstMatch(dStr);
+      if (dateMatch != null) {
+        final y = int.tryParse(dateMatch.group(1)!);
+        final m = int.tryParse(dateMatch.group(2)!);
+        final d = int.tryParse(dateMatch.group(3)!);
+        if (y != null && m != null && d != null) {
+          authDate = DateTime(y, m, d);
+          explicitDateFound = true;
+        }
+      }
+      if (authDate == null) {
         final parsedD = DateTime.tryParse(dStr);
         if (parsedD != null) {
-          final localD = parsedD.isUtc ? parsedD.toLocal() : parsedD;
-          baseDate = DateTime(localD.year, localD.month, localD.day, baseDate.hour, baseDate.minute, baseDate.second);
+          authDate = DateTime(parsedD.year, parsedD.month, parsedD.day);
+          explicitDateFound = true;
         }
       }
-
-      if (primaryTimeVal != null && primaryTimeVal.toString().trim().isNotEmpty) {
-        final tStr = primaryTimeVal.toString().trim();
-        final fullParsed = DateTime.tryParse(tStr);
-        if (fullParsed != null && tStr.contains('T')) {
-          final localT = fullParsed.isUtc ? fullParsed.toLocal() : fullParsed;
-          if (eventDateVal != null && eventDateVal.toString().trim().isNotEmpty) {
-            return DateTime(baseDate.year, baseDate.month, baseDate.day, localT.hour, localT.minute, localT.second);
-          }
-          return localT;
-        }
-        final parts = tStr.split(':');
-        if (parts.length >= 2) {
-          final h = int.tryParse(parts[0]) ?? baseDate.hour;
-          final m = int.tryParse(parts[1]) ?? baseDate.minute;
-          final s = (parts.length >= 3) ? (int.tryParse(parts[2].split('.')[0]) ?? 0) : 0;
-          return DateTime(baseDate.year, baseDate.month, baseDate.day, h, m, s);
-        }
-      }
-
-      return baseDate;
     }
 
-    final now = DateTime.now();
-    final start = parseDateTimeCombined(
-      json['startTime'] ?? json['start_time'],
-      json['event_date'] ?? json['eventDate'] ?? json['date'],
-      now,
-    );
-    final end = parseDateTimeCombined(
-      json['endTime'] ?? json['end_time'],
-      json['event_date'] ?? json['eventDate'] ?? json['date'],
-      start.add(const Duration(hours: 1)),
-    );
+    // 2. Check explicit integer date fields
+    if (authDate == null) {
+      final y = int.tryParse(json['year']?.toString() ?? '');
+      final m = int.tryParse(json['month']?.toString() ?? '');
+      final d = int.tryParse(json['day']?.toString() ?? '');
+      if (y != null && m != null && d != null && y > 1900 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+        authDate = DateTime(y, m, d);
+        explicitDateFound = true;
+      }
+    }
+
+    // 3. Check if startTime or start_time is a full ISO datetime with date
+    final dynamic rawStartVal = json['startTime'] ?? json['start_time'];
+    DateTime? fullParsedStart;
+    if (rawStartVal != null && rawStartVal.toString().trim().isNotEmpty) {
+      final sStr = rawStartVal.toString().trim();
+      final startMatch = RegExp(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})').firstMatch(sStr);
+      if (startMatch != null) {
+        final y = int.tryParse(startMatch.group(1)!);
+        final m = int.tryParse(startMatch.group(2)!);
+        final d = int.tryParse(startMatch.group(3)!);
+        if (y != null && m != null && d != null && authDate == null) {
+          authDate = DateTime(y, m, d);
+          explicitDateFound = true;
+        }
+      }
+      final parsed = DateTime.tryParse(sStr);
+      if (parsed != null && (sStr.contains('T') || sStr.contains(' '))) {
+        final localStart = parsed.isUtc ? parsed.toLocal() : parsed;
+        fullParsedStart = localStart;
+        if (authDate == null) {
+          authDate = DateTime(localStart.year, localStart.month, localStart.day);
+          explicitDateFound = true;
+        }
+      }
+    }
+
+    // 4. Check if endTime or end_time contains a full ISO datetime
+    final dynamic rawEndVal = json['endTime'] ?? json['end_time'];
+    DateTime? fullParsedEnd;
+    if (rawEndVal != null && rawEndVal.toString().trim().isNotEmpty) {
+      final eStr = rawEndVal.toString().trim();
+      final endMatch = RegExp(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})').firstMatch(eStr);
+      if (endMatch != null) {
+        final y = int.tryParse(endMatch.group(1)!);
+        final m = int.tryParse(endMatch.group(2)!);
+        final d = int.tryParse(endMatch.group(3)!);
+        if (y != null && m != null && d != null && authDate == null) {
+          authDate = DateTime(y, m, d);
+          explicitDateFound = true;
+        }
+      }
+      final parsed = DateTime.tryParse(eStr);
+      if (parsed != null && (eStr.contains('T') || eStr.contains(' '))) {
+        final localEnd = parsed.isUtc ? parsed.toLocal() : parsed;
+        fullParsedEnd = localEnd;
+        if (authDate == null) {
+          authDate = DateTime(localEnd.year, localEnd.month, localEnd.day);
+          explicitDateFound = true;
+        }
+      }
+    }
+
+    // 5. If date is missing/malformed, preserve the existing event's date if provided
+    if (authDate == null && fallbackDate != null) {
+      authDate = DateTime(fallbackDate.year, fallbackDate.month, fallbackDate.day);
+      explicitDateFound = true;
+    }
+
+    // Never silently convert a known event to today; only brand new records without any date use today
+    final finalBaseDate = authDate ?? DateTime.now();
+
+    // Parse start time component (hours, minutes, seconds)
+    int startH = 9;
+    int startM = 0;
+    int startS = 0;
+    if (fullParsedStart != null) {
+      startH = fullParsedStart.hour;
+      startM = fullParsedStart.minute;
+      startS = fullParsedStart.second;
+    } else if (rawStartVal != null && rawStartVal.toString().trim().isNotEmpty) {
+      final sStr = rawStartVal.toString().trim();
+      final timeMatch = RegExp(r'(\d{1,2}):(\d{2})(?::(\d{2}))?').firstMatch(sStr);
+      if (timeMatch != null) {
+        startH = int.tryParse(timeMatch.group(1)!) ?? 9;
+        startM = int.tryParse(timeMatch.group(2)!) ?? 0;
+        startS = (timeMatch.group(3) != null) ? (int.tryParse(timeMatch.group(3)!) ?? 0) : 0;
+      }
+    }
+
+    // Parse end time component (hours, minutes, seconds)
+    int endH = startH + 1;
+    int endM = startM;
+    int endS = startS;
+    if (fullParsedEnd != null) {
+      endH = fullParsedEnd.hour;
+      endM = fullParsedEnd.minute;
+      endS = fullParsedEnd.second;
+    } else if (rawEndVal != null && rawEndVal.toString().trim().isNotEmpty) {
+      final eStr = rawEndVal.toString().trim();
+      final timeMatch = RegExp(r'(\d{1,2}):(\d{2})(?::(\d{2}))?').firstMatch(eStr);
+      if (timeMatch != null) {
+        endH = int.tryParse(timeMatch.group(1)!) ?? (startH + 1);
+        endM = int.tryParse(timeMatch.group(2)!) ?? startM;
+        endS = (timeMatch.group(3) != null) ? (int.tryParse(timeMatch.group(3)!) ?? 0) : 0;
+      }
+    }
+
+    final start = DateTime(finalBaseDate.year, finalBaseDate.month, finalBaseDate.day, startH, startM, startS);
+    DateTime end = DateTime(finalBaseDate.year, finalBaseDate.month, finalBaseDate.day, endH, endM, endS);
+    if (!end.isAfter(start)) {
+      end = start.add(const Duration(hours: 1));
+    }
+
     final rawType = (json['type'] ?? json['event_type'] ?? json['type_name'] ?? '').toString().trim();
     final rawCat = (json['category'] ?? json['event_category'] ?? '').toString().trim();
 
@@ -442,10 +545,10 @@ class CalendarEvent {
         DateTime.tryParse(json['updatedAt']?.toString() ?? '') ??
         DateTime.now();
 
+    // is_all_day is NOT treated as isCompleted
     final bool isDone = parseBool(json['isCompleted'] ?? json['is_completed']) ||
         (json['status']?.toString().toLowerCase() == 'completed') ||
-        (rawCat.toUpperCase() == 'COMPLETED') ||
-        parseBool(json['is_all_day']);
+        (rawCat.toUpperCase() == 'COMPLETED');
 
     return CalendarEvent(
       id: json['id']?.toString() ?? generateUuidV4(),
@@ -458,9 +561,11 @@ class CalendarEvent {
       category: parsedCat,
       isCompleted: isDone,
       updatedAt: parsedUpdatedAt,
+      hasExplicitEventDate: explicitDateFound,
     );
   }
 }
+
 
 class AppNotification {
   final String id;

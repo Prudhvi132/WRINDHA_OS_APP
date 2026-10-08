@@ -959,12 +959,9 @@ class AppProvider extends ChangeNotifier {
 
   double get availableBalance => _monthlyBudget + totalIncome - totalExpenses;
 
-  // Date Restriction Validation
+  // Date Restriction Validation (allows previous dates, today, and future dates)
   bool isDateAllowedForCreation(DateTime date) {
-    final now = DateTime.now();
-    final todayMidnight = DateTime(now.year, now.month, now.day);
-    final targetMidnight = DateTime(date.year, date.month, date.day);
-    return !targetMidnight.isBefore(todayMidnight);
+    return true;
   }
 
   Future<void> setAuthenticatedSession({
@@ -2622,7 +2619,7 @@ class AppProvider extends ChangeNotifier {
 
   Future<void> syncCalendarEventsFromCloud() async {
     try {
-      final remoteEvents = await ApiService.fetchCalendarEvents();
+      final remoteEvents = await ApiService.fetchCalendarEvents(existingEvents: _calendarEvents);
       final validRemote = remoteEvents.where((e) => !_deletedItemIds.contains(e.id)).toList();
       final Map<String, CalendarEvent> evtMap = {for (var e in _calendarEvents) if (!_deletedItemIds.contains(e.id)) e.id: e};
       for (var re in validRemote) {
@@ -2630,9 +2627,9 @@ class AppProvider extends ChangeNotifier {
         if (!evtMap.containsKey(matchKey)) {
           final titleMatch = evtMap.values.where((e) =>
             e.title.trim().toLowerCase() == re.title.trim().toLowerCase() &&
-            e.startTime.year == re.startTime.year &&
-            e.startTime.month == re.startTime.month &&
-            e.startTime.day == re.startTime.day
+            ((e.startTime.year == re.startTime.year &&
+              e.startTime.month == re.startTime.month &&
+              e.startTime.day == re.startTime.day) || (!re.hasExplicitEventDate))
           ).firstOrNull;
           if (titleMatch != null) matchKey = titleMatch.id;
         }
@@ -2641,11 +2638,27 @@ class AppProvider extends ChangeNotifier {
         if (local != null) {
           local.title = re.title.isNotEmpty ? re.title : local.title;
           local.description = re.description;
-          local.startTime = re.startTime;
-          local.endTime = re.endTime;
           local.location = re.location.isNotEmpty ? re.location : local.location;
           local.type = (re.type.isNotEmpty && re.type.toLowerCase() != 'general') ? re.type : local.type;
           local.category = local.type;
+
+          // SAFE DATE PRESERVATION:
+          // Check if remote event has a safe, authoritative date or if it collapsed to today
+          final now = DateTime.now();
+          final isReToday = re.startTime.year == now.year && re.startTime.month == now.month && re.startTime.day == now.day;
+          final isLocalNotToday = local.startTime.year != now.year || local.startTime.month != now.month || local.startTime.day != now.day;
+
+          if (isReToday && isLocalNotToday && !re.hasExplicitEventDate) {
+            // Remote record lacked an explicit event_date and got today's date:
+            // PRESERVE the local event's date (year, month, day) and only update times!
+            local.startTime = DateTime(local.startTime.year, local.startTime.month, local.startTime.day, re.startTime.hour, re.startTime.minute, re.startTime.second);
+            local.endTime = DateTime(local.endTime.year, local.endTime.month, local.endTime.day, re.endTime.hour, re.endTime.minute, re.endTime.second);
+            // Heal the remote record with the correct local date
+            ApiService.updateCalendarEventOnBackend(local);
+          } else {
+            local.startTime = re.startTime;
+            local.endTime = re.endTime;
+          }
 
           if (local.updatedAt.isAfter(re.updatedAt)) {
             if (local.isCompleted != re.isCompleted) {
