@@ -5,6 +5,7 @@ import '../config/subscription_config.dart';
 import '../models/models.dart';
 import '../services/api_service.dart';
 import '../services/auth_api_service.dart';
+import '../services/billing_service.dart';
 import '../services/feature_access_service.dart';
 
 class AppProvider extends ChangeNotifier {
@@ -1327,6 +1328,9 @@ class AppProvider extends ChangeNotifier {
         await _loadUserIsolatedData();
         syncSubscription();
         syncAllDataFromCloud();
+        
+        // Initialize Google Play Billing and restore purchases
+        _initializeBilling();
       } else if (storedToken != null &&
           storedToken.isNotEmpty &&
           storedToken != 'guest_token') {
@@ -2263,6 +2267,25 @@ class AppProvider extends ChangeNotifier {
     } finally {
       _isSyncing = false;
       notifyListeners();
+    }
+  }
+
+  /// Initialize Google Play Billing and restore past purchases
+  Future<void> _initializeBilling() async {
+    try {
+      final billingService = BillingService();
+      await billingService.initialize(
+        onProStatusChanged: (isPro) {
+          if (isPro && !_user.isPremium) {
+            upgradeToPremium(provider: 'GOOGLE_PLAY');
+          }
+        },
+      );
+      
+      // Restore any past purchases
+      await billingService.restorePurchases();
+    } catch (e) {
+      debugPrint('[AppProvider] Billing initialization error: $e');
     }
   }
 

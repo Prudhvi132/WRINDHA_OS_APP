@@ -18,7 +18,15 @@ const isProduction = (process.env.NODE_ENV === 'production');
 
 // Fail loudly in production if critical secrets are missing
 if (isProduction) {
-  const requiredProductionKeys = ['JWT_SECRET', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'];
+  const requiredProductionKeys = [
+    'JWT_SECRET',
+    'SUPABASE_URL',
+    'SUPABASE_SERVICE_ROLE_KEY',
+    'GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL',
+    'GOOGLE_PLAY_PRIVATE_KEY',
+    'GOOGLE_PLAY_PACKAGE_NAME',
+    'GOOGLE_PLAY_SUBSCRIPTION_PRODUCT_ID'
+  ];
   const missingKeys = requiredProductionKeys.filter((key) => !process.env[key]);
   if (missingKeys.length > 0) {
     console.error(`[FATAL] Missing required production environment variables: ${missingKeys.join(', ')}`);

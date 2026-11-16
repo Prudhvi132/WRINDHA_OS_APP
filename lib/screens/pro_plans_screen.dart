@@ -21,21 +21,9 @@ class _ProPlansScreenState extends State<ProPlansScreen> {
   void initState() {
     super.initState();
     _billingService.addListener(_onBillingUpdated);
-    _billingService.initialize(
-      onProStatusChanged: (isPro) {
-        if (isPro && mounted) {
-          final provider = Provider.of<AppProvider>(context, listen: false);
-          provider.upgradeToPremium();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('🎉 WrindhaOS Pro unlocked via Google Play!'),
-              backgroundColor: Color(0xFF10B981),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
-      },
-    );
+    // Billing is already initialized at app startup via AppProvider
+    // Just query for latest product details
+    _billingService.queryProducts();
   }
 
   void _onBillingUpdated() {
@@ -67,109 +55,21 @@ class _ProPlansScreenState extends State<ProPlansScreen> {
 
     if (launched || !mounted) return;
 
+    // Show error and let user retry - no developer mode fallback
     if (_billingService.errorMessage != null && _billingService.errorMessage!.isNotEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(_billingService.errorMessage!),
           backgroundColor: const Color(0xFFE11D48),
           behavior: SnackBarBehavior.floating,
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: Colors.white,
+            onPressed: () => _handleUpgradeToPro(context),
+          ),
         ),
       );
     }
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Theme.of(context).brightness == Brightness.dark
-          ? const Color(0xFF1E293B)
-          : Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      builder: (ctx) {
-        final isDark = Theme.of(ctx).brightness == Brightness.dark;
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 28.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 48,
-                height: 5,
-                decoration: BoxDecoration(
-                  color: Colors.grey.withOpacity(0.3),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              const SizedBox(height: 24),
-              Container(
-                width: 64,
-                height: 64,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0D5CE5).withOpacity(0.12),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.store_mall_directory_rounded,
-                  color: Color(0xFF0D5CE5),
-                  size: 32,
-                ),
-              ),
-              const SizedBox(height: 18),
-              Text(
-                'Google Play Billing',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w800,
-                  color: isDark ? Colors.white : const Color(0xFF0F172A),
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'In-App Subscription integration is prepared for production deployment. You can test Pro access immediately with instant preview.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 14,
-                  height: 1.45,
-                  color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
-                ),
-              ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton(
-                  onPressed: () async {
-                    Navigator.pop(ctx);
-                    final provider = Provider.of<AppProvider>(context, listen: false);
-                    await provider.upgradeToPremium();
-                    if (!mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('🎉 WrindhaOS Pro unlocked successfully!'),
-                        backgroundColor: Color(0xFF10B981),
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF0D5CE5),
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  ),
-                  child: const Text('Unlock Pro Preview (Developer Mode)', style: TextStyle(fontWeight: FontWeight.bold)),
-                ),
-              ),
-              const SizedBox(height: 8),
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Dismiss', style: TextStyle(color: Color(0xFF64748B))),
-              ),
-            ],
-          ),
-        );
-      },
-    );
   }
 
   @override
