@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../services/billing_service.dart';
@@ -54,6 +54,7 @@ class _ProPlansScreenState extends State<ProPlansScreen> {
     }
 
     if (launched || !mounted) return;
+    if (!context.mounted) return;
 
     // Show error and let user retry - no developer mode fallback
     if (_billingService.errorMessage != null && _billingService.errorMessage!.isNotEmpty) {
@@ -78,7 +79,7 @@ class _ProPlansScreenState extends State<ProPlansScreen> {
     final provider = Provider.of<AppProvider>(context);
     final isPro = provider.user.isPremium;
 
-    final primaryColor = const Color(0xFF0D5CE5);
+    const primaryColor = Color(0xFF0D5CE5);
     final textPrimary = isDark ? Colors.white : const Color(0xFF0F172A);
     final textSecondary = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
     final cardBg = isDark ? const Color(0xFF1E293B) : Colors.white;

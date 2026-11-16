@@ -8,8 +8,13 @@ const logger = require('../utils/logger');
 async function verifyGooglePlayPurchaseToken(purchaseToken, productId) {
   logger.info('Initiating server-side Google Play subscription verification', { productId });
 
-  // Verify Package Name & Product ID match configured application
-  if (productId !== config.googlePlay.subscriptionProductId) {
+  // Verify Package Name & Product ID match configured application (with backward-compatible support)
+  const allowedProductIds = [
+    config.googlePlay.subscriptionProductId,
+    'wrindha_pro_monthly',
+    'wrindhaos_premium_monthly',
+  ];
+  if (!allowedProductIds.includes(productId)) {
     throw {
       statusCode: 400,
       code: 'INVALID_PRODUCT_ID',
