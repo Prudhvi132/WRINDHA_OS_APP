@@ -366,7 +366,7 @@ class _ProPlansScreenState extends State<ProPlansScreen> {
                           borderRadius: BorderRadius.circular(16),
                         ),
                       ),
-                      child: _isProcessing
+                      child: (_isProcessing || _billingService.isProcessing || _billingService.isVerifying)
                           ? const SizedBox(
                               width: 22,
                               height: 22,
@@ -381,6 +381,33 @@ class _ProPlansScreenState extends State<ProPlansScreen> {
                             ),
                     ),
                   ),
+                  if (_billingService.isVerifying) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      'Verifying your purchase with Google Play…',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: textSecondary,
+                      ),
+                    ),
+                  ],
+                  if (!isPro &&
+                      !_billingService.isVerifying &&
+                      _billingService.errorMessage != null &&
+                      _billingService.errorMessage!.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      _billingService.errorMessage!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFFE11D48),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),

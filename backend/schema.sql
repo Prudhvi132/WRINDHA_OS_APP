@@ -173,6 +173,12 @@ ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS payment_provider VARCH
 ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
 ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS purchase_token TEXT;
+ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS product_id VARCHAR(100);
+ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS order_id VARCHAR(150);
+ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS auto_renewing BOOLEAN DEFAULT TRUE;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_purchase_token ON public.subscriptions(purchase_token);
 
 CREATE INDEX IF NOT EXISTS idx_subscriptions_user_status ON public.subscriptions(user_id, status);
 

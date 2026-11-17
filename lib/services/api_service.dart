@@ -127,6 +127,21 @@ class ApiService {
     };
   }
 
+  /// Public authenticated headers for external services (e.g. BillingService).
+  /// Returns null when there is no valid session.
+  static Future<Map<String, String>?> getAuthHeaders() async {
+    final token = await getSessionToken();
+    final uid = await getEffectiveUserUuid();
+    if ((token == null || token.isEmpty) || (uid == null || uid.isEmpty)) {
+      return null;
+    }
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer $token',
+      'x-user-id': uid,
+    };
+  }
+
   /// Execute POST request with resilient fallback URL routing for Vercel
   static Future<http.Response> _postWithFallback(
     String primaryEndpoint, {
@@ -2131,75 +2146,65 @@ class ApiService {
     return null;
   }
 
-  static Future<Map<String, dynamic>> upgradeSubscription({String provider = 'GOOGLE_PLAY'}) async {
-    Map<String, dynamic> result = {'success': true, 'isPro': true, 'isPremium': true, 'plan': 'pro'};
+  /// SECURITY: Pro activation requires a Google Play purchase token that the
+  /// backend verifies against the Google Play Developer API. The previous
+  /// implementation wrote is_premium directly to Supabase with the service-role
+  /// key, allowing any client to activate Pro without paying - removed.
+  static Future<Map<String, dynamic>> verifyPlayPurchase({
+    required String purchaseToken,
+    required String productId,
+  }) async {
     try {
-      final headers = await _getHeaders();
-      // 1. Try Vercel Backend Endpoints
-      for (final ep in ['/subscription/upgrade', '/subscription', '/subscription-upgrade']) {
+      final headers = await getAuthHeaders();
+      if (headers == null) {
+        return {
+          'success': false,
+          'message': 'Authentication required. Please log in and try again.',
+        };
+      }
+
+      final endpoints = [
+        '/subscription/verify-play-purchase',
+        '/subscription/verify',
+        '/subscription/upgrade',
+      ];
+
+      http.Response? response;
+      for (final ep in endpoints) {
         try {
-          final response = await http
+          response = await http
               .post(
                 Uri.parse('$baseUrl$ep'),
                 headers: headers,
-                body: jsonEncode({'provider': provider, 'plan': 'pro'}),
+                body: jsonEncode({
+                  'purchaseToken': purchaseToken,
+                  'productId': productId,
+                }),
               )
-              .timeout(const Duration(seconds: 6), onTimeout: () => http.Response('{}', 408));
-          if (response.statusCode == 200) {
-            result = jsonDecode(response.body);
-            break;
-          }
+              .timeout(const Duration(seconds: 20), onTimeout: () => http.Response('{}', 408));
+          if (response.statusCode != 404 && response.statusCode != 405) break;
         } catch (_) {}
       }
 
-      // 2. Direct Supabase Persistent Storage (profiles + subscriptions)
-      final user = await getSessionUser();
-      final uid = user?['id']?.toString() ?? user?['userId']?.toString();
-      if (uid != null && uid.isNotEmpty) {
-        // Direct update to profiles
-        await http.patch(
-          Uri.parse('$supabaseUrl/rest/v1/profiles?id=eq.$uid'),
-          headers: {
-            'apikey': supabaseServiceKey,
-            'Authorization': 'Bearer $supabaseServiceKey',
-            'Content-Type': 'application/json',
-            'Prefer': 'return=representation',
-          },
-          body: jsonEncode({
-            'is_premium': true,
-            'subscription_plan': 'PRO',
-            'updated_at': DateTime.now().toUtc().toIso8601String(),
-          }),
-        ).timeout(const Duration(seconds: 6), onTimeout: () => http.Response('', 408));
-
-        // Direct upsert to subscriptions (using valid PostgreSQL schema & on_conflict)
-        await http.post(
-          Uri.parse('$supabaseUrl/rest/v1/subscriptions?on_conflict=user_id'),
-          headers: {
-            'apikey': supabaseServiceKey,
-            'Authorization': 'Bearer $supabaseServiceKey',
-            'Content-Type': 'application/json',
-            'Prefer': 'return=representation, resolution=merge-duplicates',
-          },
-          body: jsonEncode({
-            'user_id': uid,
-            'plan': 'premium',
-            'status': 'active',
-            'payment_provider': provider,
-            'updated_at': DateTime.now().toUtc().toIso8601String(),
-          }),
-        ).timeout(const Duration(seconds: 6), onTimeout: () => http.Response('', 408));
-
-        // Update local session user cache
-        final updatedUser = Map<String, dynamic>.from(user ?? {});
-        updatedUser['isPremium'] = true;
-        updatedUser['subscriptionPlan'] = 'PRO';
-        final token = await getSessionToken() ?? '';
-        await saveSession(token, updatedUser);
+      if (response == null) {
+        return {'success': false, 'message': 'Unable to reach the verification server.'};
       }
-      return result;
+
+      Map<String, dynamic> data = {};
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) data = decoded;
+      } catch (_) {}
+
+      if (response.statusCode == 200 && data['success'] == true) {
+        return data;
+      }
+      return {
+        'success': false,
+        'message': data['message'] ?? 'Purchase verification failed (HTTP ${response.statusCode}).',
+      };
     } catch (e) {
-      return result;
+      return {'success': false, 'message': 'Purchase verification error: $e'};
     }
   }
 

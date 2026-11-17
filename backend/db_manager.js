@@ -150,8 +150,13 @@ class DatabaseManager {
     }
     if (user) {
       try {
-        const sub = await dbQuery('subscriptions', { method: 'GET', match: { user_id: uid }, single: true });
-        if (sub && (sub.plan === 'pro' || sub.plan === 'premium') && (sub.status === 'active' || sub.status === 'trial')) {
+        let subs = await dbQuery('subscriptions', { method: 'GET', match: { user_id: uid } });
+        if (!Array.isArray(subs)) subs = subs ? [subs] : [];
+        const activeProSub = subs.find((s) =>
+          (s.plan === 'pro' || s.plan === 'premium') &&
+          (s.status === 'active' || s.status === 'trial')
+        );
+        if (activeProSub) {
           user.is_premium = true;
           user.subscription_plan = 'PRO';
         }
@@ -565,10 +570,55 @@ class DatabaseManager {
   static async getUserSubscription(userId) {
     if (!userId) return { plan: 'free', isPro: false, isFree: true, status: 'active' };
     const uid = ensureUuid(userId);
-    const sub = await dbQuery('subscriptions', { method: 'GET', match: { user_id: uid }, single: true });
+    // NOTE: use a list (not single) - legacy data may contain duplicate rows
+    // per user, which makes single-row queries error out and return null.
+    let subs = await dbQuery('subscriptions', { method: 'GET', match: { user_id: uid } });
+    if (!Array.isArray(subs)) subs = subs ? [subs] : [];
     const user = await this.getUserById(uid);
 
-    const isPro = (sub && (sub.plan === 'pro' || sub.plan === 'premium')) || (user && (user.is_premium || user.subscription_plan === 'PRO' || user.subscription_plan === 'PREMIUM'));
+    // Clean up legacy duplicates: keep only the most relevant row.
+    if (subs.length > 1) {
+      subs.sort((a, b) => {
+        const aActive = (a.plan === 'pro' || a.plan === 'premium') && (a.status || '').toLowerCase() === 'active';
+        const bActive = (b.plan === 'pro' || b.plan === 'premium') && (b.status || '').toLowerCase() === 'active';
+        if (aActive !== bActive) return aActive ? -1 : 1;
+        return new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0);
+      });
+      const keepId = subs[0].id;
+      for (let i = 1; i < subs.length; i++) {
+        try {
+          await dbQuery('subscriptions', { method: 'DELETE', match: { id: subs[i].id } });
+        } catch (_) {}
+      }
+      subs = [subs[0]];
+      console.log(`[SUBSCRIPTIONS] Deduplicated rows for user ${uid}; kept ${keepId}`);
+    }
+
+    const sub = subs.length > 0 ? subs[0] : null;
+
+    // An active subscription must not be past its expiry date.
+    let subExpired = false;
+    if (sub && sub.expires_at) {
+      const expiry = Date.parse(sub.expires_at);
+      subExpired = Number.isFinite(expiry) && expiry < Date.now();
+    }
+    if (subExpired) {
+      // Expired Play subscription: auto-downgrade the record so status reflects reality.
+      try {
+        await dbQuery('subscriptions', {
+          method: 'PATCH',
+          match: { user_id: uid },
+          body: { status: 'expired', updated_at: new Date().toISOString() },
+        });
+        sub.status = 'expired';
+      } catch (_) {}
+    }
+
+    const subActivePro = sub && !subExpired &&
+      (sub.plan === 'pro' || sub.plan === 'premium') &&
+      ['active', 'cancelled', 'trial'].includes((sub.status || 'active').toLowerCase());
+    const userSaysPro = user && (user.is_premium || user.subscription_plan === 'PRO' || user.subscription_plan === 'PREMIUM');
+    const isPro = Boolean(subActivePro || (userSaysPro && !subExpired));
     return {
       id: sub ? sub.id : `sub_${uid}`,
       userId: uid,
@@ -577,10 +627,91 @@ class DatabaseManager {
       isPro,
       isPremium: isPro,
       isFree: !isPro,
-      status: sub ? sub.status : 'active',
+      // Report 'active' while the paid period is still running (cancelled users
+      // keep access until expires_at, per Google Play billing semantics).
+      status: sub ? (subExpired ? 'expired' : (sub.status === 'cancelled' ? 'active' : sub.status)) : 'active',
       started_at: sub ? sub.started_at : new Date().toISOString(),
       expires_at: sub ? sub.expires_at : null,
       payment_provider: sub ? sub.payment_provider : 'NONE',
+    };
+  }
+
+  /**
+   * SECURITY-CRITICAL: upgrade a user to Pro ONLY after the Google Play
+   * purchase token has been verified server-side.
+   * Also prevents purchase-token reuse across different accounts.
+   */
+  static async verifyAndUpgradeSubscription(userId, purchaseToken, productId) {
+    if (!userId) throw new Error('userId is required');
+    if (!purchaseToken || !productId) {
+      throw { statusCode: 400, code: 'MISSING_PURCHASE_DATA', message: 'purchaseToken and productId are required.' };
+    }
+    const uid = ensureUuid(userId);
+
+    // 1. Prevent purchase token reuse across multiple users
+    const existingSubs = await dbQuery('subscriptions', { method: 'GET', match: { purchase_token: purchaseToken } });
+    if (Array.isArray(existingSubs)) {
+      const otherOwner = existingSubs.find((s) => s.user_id !== uid);
+      if (otherOwner) {
+        throw {
+          statusCode: 400,
+          code: 'TOKEN_ALREADY_LINKED',
+          message: 'This purchase token is already linked to another WrindhaOS account.',
+        };
+      }
+    }
+
+    // 2. Server-side verification with Google Play Developer API
+    const googlePlayService = require('./google_play_service');
+    const playData = await googlePlayService.verifyPurchaseToken(purchaseToken, productId);
+    if (!playData || !playData.verified) {
+      throw { statusCode: 400, code: 'INVALID_PURCHASE', message: 'Google Play purchase verification failed.' };
+    }
+
+    // 3. Persist only verified purchases. Expired/PENDING are recorded but not granted Pro.
+    const isActive = playData.status === 'ACTIVE' || playData.status === 'CANCELLED'; // CANCELLED keeps access till period end
+    const expiryIso = playData.expiryTimeMillis ? new Date(playData.expiryTimeMillis).toISOString() : '2030-12-31T23:59:59.000Z';
+
+    const subPayload = {
+      user_id: uid,
+      plan: isActive ? 'premium' : 'free',
+      status: playData.status === 'CANCELLED' ? 'cancelled' : playData.status.toLowerCase(),
+      started_at: new Date(playData.startTimeMillis || Date.now()).toISOString(),
+      expires_at: expiryIso,
+      payment_provider: 'GOOGLE_PLAY',
+      purchase_token: purchaseToken,
+      product_id: productId,
+      order_id: playData.orderId,
+      auto_renewing: playData.autoRenewing,
+      updated_at: new Date().toISOString(),
+    };
+
+    // Persist without depending on a unique index: patch the user's existing
+    // row when present, otherwise insert a new one (and remove stale rows).
+    let userSubs = await dbQuery('subscriptions', { method: 'GET', match: { user_id: uid } });
+    if (!Array.isArray(userSubs)) userSubs = userSubs ? [userSubs] : [];
+    if (userSubs.length > 0) {
+      await dbQuery('subscriptions', { method: 'PATCH', match: { id: userSubs[0].id }, body: subPayload });
+      for (let i = 1; i < userSubs.length; i++) {
+        try {
+          await dbQuery('subscriptions', { method: 'DELETE', match: { id: userSubs[i].id } });
+        } catch (_) {}
+      }
+    } else {
+      await dbQuery('subscriptions', { method: 'POST', body: subPayload });
+    }
+
+    if (isActive) {
+      await this.updateUser(uid, { is_premium: true, subscription_plan: 'PRO' });
+    } else {
+      await this.updateUser(uid, { is_premium: false, subscription_plan: 'FREE' });
+    }
+
+    return {
+      ...(await this.getUserSubscription(uid)),
+      orderId: playData.orderId,
+      playStatus: playData.status,
+      autoRenewing: playData.autoRenewing,
     };
   }
 

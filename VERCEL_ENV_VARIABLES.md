@@ -24,6 +24,14 @@ This document contains the exact environment variables and step-by-step instruct
 | `MSG91_AUTH_KEY` | MSG91 Live Authentication Key | `563368AbE6Nls32x6a9703baP1` |
 | `MSG91_WIDGET_ID` | MSG91 OTP Widget Identifier | `36687761466f383937303733` |
 | `MSG91_OTP_TEMPLATE_ID` | MSG91 Template Identifier | `global_otp` |
+| `GOOGLE_PLAY_PACKAGE_NAME` | App package name registered in Play Console | `com.wrindhaos.app` |
+| `GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL` | Service account email for Android Publisher API | `<svc>@<project>.iam.gserviceaccount.com` |
+| `GOOGLE_PLAY_PRIVATE_KEY` | Service account private key (keep `\n` escapes) | `-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n` |
+
+> **⚠️ REQUIRED for payments:** Without `GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL` and
+> `GOOGLE_PLAY_PRIVATE_KEY`, the backend CANNOT verify purchases and will return
+> HTTP 503 `PLAY_VERIFICATION_NOT_CONFIGURED` for all upgrade attempts. Pro can
+> never be activated without a verified purchase.
 
 ---
 
@@ -48,6 +56,9 @@ EMAIL_SENDER=noreply@wrindhaos.in
 MSG91_AUTH_KEY=563368AbE6Nls32x6a9703baP1
 MSG91_WIDGET_ID=36687761466f383937303733
 MSG91_OTP_TEMPLATE_ID=global_otp
+GOOGLE_PLAY_PACKAGE_NAME=com.wrindhaos.app
+GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL=your-service-account@your-project.iam.gserviceaccount.com
+GOOGLE_PLAY_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\nYOUR_KEY_BODY\n-----END PRIVATE KEY-----\n
 ```
 
 ---
