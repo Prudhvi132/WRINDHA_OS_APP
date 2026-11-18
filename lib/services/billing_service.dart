@@ -14,6 +14,10 @@ class BillingService extends ChangeNotifier {
   /// Must exactly match the Google Play Console subscription product ID and
   /// the productId sent to the backend for server-side verification.
   static const String proSubscriptionId = 'wrindha_pro_monthly';
+  static const Set<String> allSubscriptionIds = {
+    'wrindha_pro_monthly',
+    'wrindhaos_premium_monthly',
+  };
 
   final InAppPurchase _iap = InAppPurchase.instance;
   StreamSubscription<List<PurchaseDetails>>? _purchaseSubscription;
@@ -64,11 +68,11 @@ class BillingService extends ChangeNotifier {
     await queryProducts();
   }
 
-  /// Query Google Play Store for the wrindha_pro_monthly product
+  /// Query Google Play Store for active subscription products
   Future<void> queryProducts() async {
     try {
       isAvailable = await _iap.isAvailable().timeout(
-        const Duration(seconds: 5),
+        const Duration(seconds: 10),
         onTimeout: () => false,
       );
     } catch (e) {
@@ -95,20 +99,24 @@ class BillingService extends ChangeNotifier {
     );
 
     try {
-      final ProductDetailsResponse response = await _iap.queryProductDetails({proSubscriptionId}).timeout(
-        const Duration(seconds: 8),
+      final ProductDetailsResponse response = await _iap.queryProductDetails(allSubscriptionIds).timeout(
+        const Duration(seconds: 25),
         onTimeout: () => ProductDetailsResponse(
           productDetails: [],
-          notFoundIDs: [proSubscriptionId],
+          notFoundIDs: allSubscriptionIds.toList(),
         ),
       );
       if (response.error != null) {
-        errorMessage = response.error!.message;
+        errorMessage = 'Play Store Error: ${response.error!.message} (${response.error!.code})';
         if (kDebugMode) {
-          print('[BILLING SERVICE] Query Product Error: ${response.error!.message}');
+          print('[BILLING SERVICE] Query Product Error: ${response.error!.code} - ${response.error!.message}');
         }
       } else if (response.productDetails.isNotEmpty) {
-        proProduct = response.productDetails.first;
+        // Find matching product or take first returned
+        proProduct = response.productDetails.firstWhere(
+          (p) => p.id == proSubscriptionId,
+          orElse: () => response.productDetails.first,
+        );
         errorMessage = null;
         if (kDebugMode) {
           print('[BILLING SERVICE] Found Product: ${proProduct!.id} - Price: ${proProduct!.price}');
@@ -116,7 +124,7 @@ class BillingService extends ChangeNotifier {
       } else {
         errorMessage = 'Product "$proSubscriptionId" pending Play Console activation or app download via Play Store link.';
         if (kDebugMode) {
-          print('[BILLING SERVICE] Product "$proSubscriptionId" not found in Google Play Console.');
+          print('[BILLING SERVICE] Products not found: ${response.notFoundIDs}');
         }
       }
     } catch (e) {
@@ -136,6 +144,7 @@ class BillingService extends ChangeNotifier {
       return false;
     }
 
+    // Only query if not already cached in memory
     if (proProduct == null) {
       await queryProducts();
     }
@@ -154,13 +163,10 @@ class BillingService extends ChangeNotifier {
 
     try {
       final PurchaseParam purchaseParam = PurchaseParam(productDetails: proProduct!);
-      final bool success = await _iap.buyNonConsumable(purchaseParam: purchaseParam).timeout(
-        const Duration(seconds: 8),
-        onTimeout: () => false,
-      );
+      final bool success = await _iap.buyNonConsumable(purchaseParam: purchaseParam);
       if (!success) {
         isProcessing = false;
-        errorMessage = 'Google Play Store did not launch purchase sheet (timeout or unavailable).';
+        errorMessage = 'Google Play Store did not launch purchase sheet.';
         notifyListeners();
       }
       return success;

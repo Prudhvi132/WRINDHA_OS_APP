@@ -1324,9 +1324,6 @@ class AppProvider extends ChangeNotifier {
         await _loadUserIsolatedData();
         syncSubscription();
         syncAllDataFromCloud();
-        
-        // Initialize Google Play Billing and restore purchases
-        _initializeBilling();
       } else if (storedToken != null &&
           storedToken.isNotEmpty &&
           storedToken != 'guest_token') {
@@ -1344,10 +1341,14 @@ class AppProvider extends ChangeNotifier {
       _recalculateMetrics();
       _isInitialized = true;
       notifyListeners();
+
+      // Pre-fetch Google Play Billing silently in background on app boot for all users
+      _initializeBilling();
     } catch (e) {
       debugPrint('Error loading saved state: $e');
       _isInitialized = true;
       notifyListeners();
+      _initializeBilling();
     }
   }
 
