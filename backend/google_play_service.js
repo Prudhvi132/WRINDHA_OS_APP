@@ -5,7 +5,7 @@ const crypto = require('crypto');
 // Zero external dependencies: raw REST + OAuth2 RS256 JWT via Node crypto
 // -----------------------------------------------------------------------------
 
-const PACKAGE_NAME = process.env.GOOGLE_PLAY_PACKAGE_NAME || 'com.wrindhaos.app';
+const PACKAGE_NAME = process.env.GOOGLE_PLAY_PACKAGE_NAME || 'com.wrindha.app';
 const SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL || '';
 const PRIVATE_KEY = (process.env.GOOGLE_PLAY_PRIVATE_KEY || '').replace(/\\n/g, '\n');
 
@@ -104,6 +104,33 @@ async function verifyPurchaseToken(purchaseToken, productId) {
   }
 
   const accessToken = await getAccessToken();
+
+  // 1. Try modern subscriptionsv2 API (required for products configured with base plans)
+  try {
+    const v2Url = `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${encodeURIComponent(PACKAGE_NAME)}/purchases/subscriptionsv2/tokens/${encodeURIComponent(purchaseToken)}`;
+    const resV2 = await fetch(v2Url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (resV2.ok) {
+      const subDataV2 = await resV2.json().catch(() => ({}));
+      const lineItem = subDataV2.lineItems?.[0] || {};
+      const expiryTimeMillis = lineItem.expiryTime ? new Date(lineItem.expiryTime).getTime() : 0;
+      const isExpired = expiryTimeMillis > 0 && Date.now() > expiryTimeMillis;
+      const subState = subDataV2.subscriptionState;
+      const isActive = (subState === 'SUBSCRIPTION_STATE_ACTIVE' || subState === 'SUBSCRIPTION_STATE_IN_GRACE_PERIOD') && !isExpired;
+
+      return {
+        verified: isActive,
+        orderId: subDataV2.latestOrderId || `GPA.${Date.now()}`,
+        status: isActive ? 'ACTIVE' : 'EXPIRED',
+        autoRenewing: lineItem.autoRenewingPlan != null,
+        startTimeMillis: subDataV2.startTime ? new Date(subDataV2.startTime).getTime() : Date.now(),
+        expiryTimeMillis,
+      };
+    }
+  } catch (_) {}
+
+  // 2. Fallback to legacy v1 subscription endpoint
   const url =
     `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${encodeURIComponent(PACKAGE_NAME)}` +
     `/purchases/subscriptions/${encodeURIComponent(productId)}/tokens/${encodeURIComponent(purchaseToken)}`;
