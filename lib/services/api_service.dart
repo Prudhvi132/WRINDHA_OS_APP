@@ -2257,28 +2257,6 @@ class ApiService {
     }
   }
 
-      if (response == null) {
-        return {'success': false, 'message': 'Unable to reach the verification server.'};
-      }
-
-      Map<String, dynamic> data = {};
-      try {
-        final decoded = jsonDecode(response.body);
-        if (decoded is Map<String, dynamic>) data = decoded;
-      } catch (_) {}
-
-      if (response.statusCode == 200 && data['success'] == true) {
-        return data;
-      }
-      return {
-        'success': false,
-        'message': data['message'] ?? 'Purchase verification failed (HTTP ${response.statusCode}).',
-      };
-    } catch (e) {
-      return {'success': false, 'message': 'Purchase verification error: $e'};
-    }
-  }
-
   // ---------------------------------------------------------------------------
   // 4. COUPON & PROMOTIONAL SYSTEM
   // ---------------------------------------------------------------------------

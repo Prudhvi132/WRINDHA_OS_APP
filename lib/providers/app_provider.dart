@@ -1313,7 +1313,6 @@ class AppProvider extends ChangeNotifier {
     }
     await syncSubscription();
   }
-  }
 
   // Initial Data Setup & Persistence
   Future<void> _initData() async {
@@ -2324,7 +2323,7 @@ class AppProvider extends ChangeNotifier {
     try {
       final billingService = BillingService();
       await billingService.initialize(
-        onProStatusChanged: (isPro) {
+        onProStatusChanged: (isPro, {String? purchaseToken, String? orderId}) {
           if (isPro && !_user.isPremium) {
             // Called by BillingService only after backend verification succeeded.
             activateProFromVerifiedPurchase(verified: true);
