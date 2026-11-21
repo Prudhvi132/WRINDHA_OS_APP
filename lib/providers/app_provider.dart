@@ -16,6 +16,22 @@ class AppProvider extends ChangeNotifier {
   AppProvider() {
     loadThemePreference();
     _initData();
+    _initBilling();
+  }
+
+  Future<void> _initBilling() async {
+    await BillingService().initialize(
+      onProStatusChanged: (isPro, {String? purchaseToken, String? orderId}) {
+        if (isPro) {
+          // Grant Pro status globally across all screens and models
+          updateSubscriptionPlan(
+            SubscriptionPlanType.pro,
+            purchaseToken: purchaseToken,
+            orderId: orderId,
+          );
+        }
+      },
+    );
   }
 
   void toggleTheme([bool? isDark]) {
@@ -137,7 +153,11 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void updateSubscriptionPlan(SubscriptionPlanType plan) {
+  void updateSubscriptionPlan(
+    SubscriptionPlanType plan, {
+    String? purchaseToken,
+    String? orderId,
+  }) {
     _user.subscriptionPlan = plan.nameCode;
     _user.isPremium = plan.isPro;
     _subscription = UserSubscription(
@@ -150,7 +170,11 @@ class AppProvider extends ChangeNotifier {
     _saveSession();
     _saveSubscriptionState();
     notifyListeners();
-    ApiService.upgradeSubscription(provider: 'GOOGLE_PLAY');
+    ApiService.upgradeSubscription(
+      provider: 'GOOGLE_PLAY',
+      purchaseToken: purchaseToken,
+      orderId: orderId,
+    );
   }
 
   Future<void> _saveSubscriptionState() async {
@@ -1352,20 +1376,7 @@ class AppProvider extends ChangeNotifier {
 
       _recalculateMetrics();
 
-      // 3. Initialize Global Google Play Billing Lifecycle & Persistent Stream
-      BillingService().initialize(
-        onProStatusChanged: (isPro, {String? purchaseToken, String? orderId}) async {
-          if (isPro) {
-            await upgradeToPremium(
-              provider: 'GOOGLE_PLAY',
-              purchaseToken: purchaseToken,
-              orderId: orderId,
-            );
-          }
-        },
-      );
-
-      // 4. Auto-restore active purchases if user is logged in on Free plan
+      // Auto-restore active purchases if user is logged in on Free plan
       final isCurrentPro = _user.isPremium || _user.subscriptionPlan.toUpperCase() == 'PRO';
       if (_isLoggedIn && !isCurrentPro) {
         BillingService().restorePurchases();

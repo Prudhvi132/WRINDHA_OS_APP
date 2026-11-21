@@ -24,10 +24,21 @@ class BillingService extends ChangeNotifier {
   String get formattedPrice => proProduct?.price ?? '';
   bool get hasProduct => proProduct != null;
 
-  /// Initialize early in app lifecycle (AppProvider / main)
+  bool _isInitialized = false;
+  bool get isInitialized => _isInitialized;
+
+  /// Initialize early in app lifecycle (AppProvider / main) - idempotent and safe to call multiple times
   Future<void> initialize({Function(bool isPro, {String? purchaseToken, String? orderId})? onProStatusChanged}) async {
     if (onProStatusChanged != null) {
       _onProStatusChanged = onProStatusChanged;
+    }
+
+    // If stream is already listening, do not cancel or re-subscribe; just ensure products are queried
+    if (_isInitialized && _purchaseSubscription != null) {
+      if (proProduct == null) {
+        await queryProducts();
+      }
+      return;
     }
 
     try {
@@ -51,12 +62,17 @@ class BillingService extends ChangeNotifier {
     _purchaseSubscription?.cancel();
     _purchaseSubscription = _iap.purchaseStream.listen(
       _handlePurchaseUpdates,
-      onDone: () => _purchaseSubscription?.cancel(),
+      onDone: () {
+        _isInitialized = false;
+        _purchaseSubscription?.cancel();
+      },
       onError: (error) {
         errorMessage = error.toString();
         notifyListeners();
       },
     );
+
+    _isInitialized = true;
 
     // Load live Product Details from Google Play Store
     await queryProducts();
