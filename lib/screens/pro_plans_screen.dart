@@ -21,9 +21,9 @@ class _ProPlansScreenState extends State<ProPlansScreen> {
   void initState() {
     super.initState();
     _billingService.addListener(_onBillingUpdated);
-    // Billing is already initialized at app startup via AppProvider
-    // Just query for latest product details
-    _billingService.queryProducts();
+    if (_billingService.proProduct == null) {
+      _billingService.queryProducts();
+    }
   }
 
   void _onBillingUpdated() {
@@ -98,6 +98,26 @@ class _ProPlansScreenState extends State<ProPlansScreen> {
           'WrindhaOS Plans',
           style: TextStyle(color: textPrimary, fontWeight: FontWeight.w800),
         ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Checking Google Play for active subscriptions...'),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+              await _billingService.restorePurchases();
+            },
+            child: const Text(
+              'Restore',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF0D5CE5),
+              ),
+            ),
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12.0),
@@ -299,14 +319,30 @@ class _ProPlansScreenState extends State<ProPlansScreen> {
                             crossAxisAlignment: CrossAxisAlignment.baseline,
                             textBaseline: TextBaseline.alphabetic,
                             children: [
-                              Text(
-                                _billingService.formattedPrice,
-                                style: TextStyle(
-                                  fontSize: 26,
-                                  fontWeight: FontWeight.w900,
-                                  color: textPrimary,
+                              if (_billingService.formattedPrice.isNotEmpty)
+                                Text(
+                                  _billingService.formattedPrice,
+                                  style: TextStyle(
+                                    fontSize: 26,
+                                    fontWeight: FontWeight.w900,
+                                    color: textPrimary,
+                                  ),
+                                )
+                              else if (_billingService.isProcessing)
+                                SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(strokeWidth: 2.2, color: primaryColor),
+                                )
+                              else
+                                Text(
+                                  '₹49 / month',
+                                  style: TextStyle(
+                                    fontSize: 26,
+                                    fontWeight: FontWeight.w900,
+                                    color: textPrimary,
+                                  ),
                                 ),
-                              ),
                             ],
                           ),
                         ],

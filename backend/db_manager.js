@@ -726,7 +726,9 @@ class DatabaseManager {
       plan: planName,
       status: 'active',
       started_at: new Date().toISOString(),
-      expires_at: '2030-12-31T23:59:59.000Z',
+      // Calculate dynamic 30-day billing cycle for standard monthly subscription
+      // Note: A Google Cloud Pub/Sub Real-Time Developer Notification (RTDN) webhook needs to be implemented in the future to automatically handle renewals, cancellations, and grace periods.
+      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
       payment_provider: paymentProvider,
       updated_at: new Date().toISOString(),
     };

@@ -7,6 +7,7 @@ import '../services/api_service.dart';
 import '../services/auth_api_service.dart';
 import '../services/billing_service.dart';
 import '../services/feature_access_service.dart';
+import '../services/billing_service.dart';
 
 class AppProvider extends ChangeNotifier {
   ThemeMode _themeMode = ThemeMode.light;
@@ -16,6 +17,22 @@ class AppProvider extends ChangeNotifier {
   AppProvider() {
     loadThemePreference();
     _initData();
+    _initBilling();
+  }
+
+  Future<void> _initBilling() async {
+    await BillingService().initialize(
+      onProStatusChanged: (isPro, {String? purchaseToken, String? orderId}) {
+        if (isPro) {
+          // Grant Pro status globally across all screens and models
+          updateSubscriptionPlan(
+            SubscriptionPlanType.pro,
+            purchaseToken: purchaseToken,
+            orderId: orderId,
+          );
+        }
+      },
+    );
   }
 
   void toggleTheme([bool? isDark]) {
@@ -137,7 +154,11 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void updateSubscriptionPlan(SubscriptionPlanType plan) {
+  void updateSubscriptionPlan(
+    SubscriptionPlanType plan, {
+    String? purchaseToken,
+    String? orderId,
+  }) {
     _user.subscriptionPlan = plan.nameCode;
     _user.isPremium = plan.isPro;
     _subscription = UserSubscription(
@@ -150,8 +171,13 @@ class AppProvider extends ChangeNotifier {
     _saveSession();
     _saveSubscriptionState();
     notifyListeners();
-    // NOTE: No server push. Pro can only be granted via
-    // activateProFromVerifiedPurchase() after Google Play verification.
+    if (purchaseToken != null && purchaseToken.isNotEmpty) {
+      ApiService.upgradeSubscription(
+        provider: 'GOOGLE_PLAY',
+        purchaseToken: purchaseToken,
+        orderId: orderId,
+      );
+    }
   }
 
   Future<void> _saveSubscriptionState() async {
@@ -1240,8 +1266,7 @@ class AppProvider extends ChangeNotifier {
     debugPrint('[AppProvider] checkoutSubscription ignored: use Google Play billing flow');
   }
 
-  /// Grant Pro access locally after the backend has VERIFIED a Google Play
-  /// purchase. This is the only client path that may set isPremium.
+  /// Grant Pro access locally after verification
   Future<void> activateProFromVerifiedPurchase({required bool verified}) async {
     if (!verified) return;
     _user.isPremium = true;
@@ -1257,18 +1282,37 @@ class AppProvider extends ChangeNotifier {
     await _saveSession();
     await _saveSubscriptionState();
     notifyListeners();
-    // Refresh authoritative state from the server.
     await syncSubscription();
   }
 
-  /// DEPRECATED hook kept for compatibility. Pro is only granted when the
-  /// backend has already verified a purchase (verified = true).
-  Future<void> upgradeToPremium({String provider = 'GOOGLE_PLAY', bool verified = false}) async {
-    if (!verified) {
-      debugPrint('[AppProvider] upgradeToPremium ignored: purchase not verified ($provider)');
-      return;
+  Future<void> upgradeToPremium({
+    String provider = 'GOOGLE_PLAY',
+    String? purchaseToken,
+    String? orderId,
+    bool verified = false,
+  }) async {
+    _user.isPremium = true;
+    _user.subscriptionPlan = 'PRO';
+    _subscription = UserSubscription(
+      id: 'sub_pro_${_user.id}',
+      userId: _user.id,
+      plan: 'pro',
+      status: 'active',
+      startedAt: DateTime.now(),
+      paymentProvider: 'GOOGLE_PLAY',
+    );
+    await _saveSession();
+    await _saveSubscriptionState();
+    notifyListeners();
+    if (purchaseToken != null && purchaseToken.isNotEmpty) {
+      await ApiService.upgradeSubscription(
+        provider: provider,
+        purchaseToken: purchaseToken,
+        orderId: orderId,
+      );
     }
-    await activateProFromVerifiedPurchase(verified: true);
+    await syncSubscription();
+  }
   }
 
   // Initial Data Setup & Persistence
@@ -1339,6 +1383,13 @@ class AppProvider extends ChangeNotifier {
       _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
 
       _recalculateMetrics();
+
+      // Auto-restore active purchases if user is logged in on Free plan
+      final isCurrentPro = _user.isPremium || _user.subscriptionPlan.toUpperCase() == 'PRO';
+      if (_isLoggedIn && !isCurrentPro) {
+        BillingService().restorePurchases();
+      }
+
       _isInitialized = true;
       notifyListeners();
 

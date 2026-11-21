@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import '../services/billing_service.dart';
 
 class PaymentHistoryScreen extends StatelessWidget {
   const PaymentHistoryScreen({super.key});
@@ -15,6 +16,27 @@ class PaymentHistoryScreen extends StatelessWidget {
           onPressed: () => Navigator.pop(context),
         ),
         title: const Text('Payment History'),
+        actions: [
+          TextButton.icon(
+            onPressed: () async {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Checking Google Play for previous purchases...'),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+              await BillingService().restorePurchases();
+            },
+            icon: const Icon(Icons.restore_rounded, size: 18, color: Color(0xFF0D5CE5)),
+            label: const Text(
+              'Restore',
+              style: TextStyle(
+                color: Color(0xFF0D5CE5),
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12.0),
@@ -59,28 +81,56 @@ class PaymentHistoryScreen extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 14),
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF0D5CE5),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                  Row(
+                    children: [
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF0D5CE5),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 18, vertical: 10),
+                        ),
+                        onPressed: () {
+                          Navigator.pushNamed(context, '/pricing');
+                        },
+                        child: const Text(
+                          'Upgrade Plan',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 10),
-                    ),
-                    onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Plan management active.')),
-                      );
-                    },
-                    child: const Text(
-                      'Upgrade Plan',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
+                      const SizedBox(width: 10),
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF0D5CE5),
+                          side: const BorderSide(color: Color(0xFF0D5CE5)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 10),
+                        ),
+                        onPressed: () async {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Checking Google Play for previous purchases...'),
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                          await BillingService().restorePurchases();
+                        },
+                        icon: const Icon(Icons.restore_rounded, size: 16),
+                        label: const Text(
+                          'Restore',
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                        ),
                       ),
-                    ),
+                    ],
                   ),
                 ],
               ),

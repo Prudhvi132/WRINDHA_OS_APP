@@ -2208,6 +2208,77 @@ class ApiService {
     }
   }
 
+  static Future<Map<String, dynamic>> upgradeSubscription({
+    String provider = 'GOOGLE_PLAY',
+    String? purchaseToken,
+    String? orderId,
+  }) async {
+    try {
+      final headers = await _getHeaders();
+      final bodyData = <String, dynamic>{
+        'provider': provider,
+        'plan': 'pro',
+        if (purchaseToken != null && purchaseToken.isNotEmpty) 'purchaseToken': purchaseToken,
+        if (orderId != null && orderId.isNotEmpty) 'orderId': orderId,
+      };
+      http.Response? response;
+      for (final ep in ['/subscription/upgrade', '/subscription', '/subscription-upgrade', '/subscription/verify-play-purchase']) {
+        try {
+          response = await http
+              .post(
+                Uri.parse('$baseUrl$ep'),
+                headers: headers,
+                body: jsonEncode(bodyData),
+              )
+              .timeout(const Duration(seconds: 20), onTimeout: () => http.Response('{}', 408));
+          if (response.statusCode != 404 && response.statusCode != 405) break;
+        } catch (_) {}
+      }
+
+      if (response == null) {
+        return {'success': false, 'message': 'Unable to reach the verification server.'};
+      }
+
+      Map<String, dynamic> data = {};
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) data = decoded;
+      } catch (_) {}
+
+      if (response.statusCode == 200 && data['success'] == true) {
+        return data;
+      }
+      return {
+        'success': false,
+        'message': data['message'] ?? 'Purchase upgrade completed with status ${response.statusCode}.',
+      };
+    } catch (e) {
+      return {'success': false, 'message': 'Purchase verification error: $e'};
+    }
+  }
+
+      if (response == null) {
+        return {'success': false, 'message': 'Unable to reach the verification server.'};
+      }
+
+      Map<String, dynamic> data = {};
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) data = decoded;
+      } catch (_) {}
+
+      if (response.statusCode == 200 && data['success'] == true) {
+        return data;
+      }
+      return {
+        'success': false,
+        'message': data['message'] ?? 'Purchase verification failed (HTTP ${response.statusCode}).',
+      };
+    } catch (e) {
+      return {'success': false, 'message': 'Purchase verification error: $e'};
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // 4. COUPON & PROMOTIONAL SYSTEM
   // ---------------------------------------------------------------------------
