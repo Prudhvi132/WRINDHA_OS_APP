@@ -29,6 +29,7 @@ class AppProvider extends ChangeNotifier {
             SubscriptionPlanType.pro,
             purchaseToken: purchaseToken,
             orderId: orderId,
+            syncWithBackend: false, // BillingService already verifies with backend
           );
         }
       },
@@ -158,6 +159,7 @@ class AppProvider extends ChangeNotifier {
     SubscriptionPlanType plan, {
     String? purchaseToken,
     String? orderId,
+    bool syncWithBackend = true,
   }) {
     _user.subscriptionPlan = plan.nameCode;
     _user.isPremium = plan.isPro;
@@ -167,15 +169,17 @@ class AppProvider extends ChangeNotifier {
       plan: plan.nameCode.toLowerCase(),
       status: 'active',
       startedAt: DateTime.now(),
+      paymentProvider: 'GOOGLE_PLAY',
     );
     _saveSession();
     _saveSubscriptionState();
     notifyListeners();
-    if (purchaseToken != null && purchaseToken.isNotEmpty) {
+    if (syncWithBackend && purchaseToken != null && purchaseToken.isNotEmpty) {
       ApiService.upgradeSubscription(
         provider: 'GOOGLE_PLAY',
         purchaseToken: purchaseToken,
         orderId: orderId,
+        productId: 'wrindha_pro_monthly',
       );
     }
   }
@@ -1392,13 +1396,13 @@ class AppProvider extends ChangeNotifier {
       _isInitialized = true;
       notifyListeners();
 
-      // Pre-fetch Google Play Billing silently in background on app boot for all users
-      _initializeBilling();
+      // Pre-fetch Google Play Billing products silently in background on app boot
+      BillingService().queryProducts();
     } catch (e) {
       debugPrint('Error loading saved state: $e');
       _isInitialized = true;
       notifyListeners();
-      _initializeBilling();
+      BillingService().queryProducts();
     }
   }
 

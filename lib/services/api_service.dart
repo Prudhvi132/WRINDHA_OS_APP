@@ -2212,12 +2212,15 @@ class ApiService {
     String provider = 'GOOGLE_PLAY',
     String? purchaseToken,
     String? orderId,
+    String productId = 'wrindha_pro_monthly',
   }) async {
     try {
       final headers = await _getHeaders();
       final bodyData = <String, dynamic>{
         'provider': provider,
         'plan': 'pro',
+        'productId': productId,
+        'product_id': productId,
         if (purchaseToken != null && purchaseToken.isNotEmpty) 'purchaseToken': purchaseToken,
         if (orderId != null && orderId.isNotEmpty) 'orderId': orderId,
       };

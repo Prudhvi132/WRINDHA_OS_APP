@@ -1239,12 +1239,12 @@ async function handleApiRequest(req, res) {
   // Google Play Developer API before Pro is granted.
   if ((pathname === '/api/subscription/verify-play-purchase' || pathname === '/api/subscription/verify') && method === 'POST') {
     const purchaseToken = body.purchaseToken || (body.purchaseData && body.purchaseData.purchaseToken);
-    const productId = body.productId || body.product_id || (body.purchaseData && body.purchaseData.productId);
-    if (!purchaseToken || !productId) {
+    const productId = body.productId || body.product_id || (body.purchaseData && body.purchaseData.productId) || 'wrindha_pro_monthly';
+    if (!purchaseToken) {
       return sendJSON(res, 400, {
         success: false,
         error: 'MISSING_PURCHASE_DATA',
-        message: 'purchaseToken and productId are required for purchase verification.',
+        message: 'purchaseToken is required for purchase verification.',
       });
     }
     try {
@@ -1275,12 +1275,12 @@ async function handleApiRequest(req, res) {
   // purchase token is MANDATORY. Tokens are verified with Google Play server-side.
   if ((pathname === '/api/subscription/upgrade' || pathname === '/api/subscription' || pathname === '/api/subscription-upgrade' || pathname === '/api/subscription/upgrade/') && method === 'POST') {
     const purchaseToken = body.purchaseToken || (body.purchaseData && body.purchaseData.purchaseToken);
-    const productId = body.productId || body.product_id || (body.purchaseData && body.purchaseData.productId);
-    if (!purchaseToken || !productId) {
+    const productId = body.productId || body.product_id || (body.purchaseData && body.purchaseData.productId) || 'wrindha_pro_monthly';
+    if (!purchaseToken) {
       return sendJSON(res, 400, {
         success: false,
         error: 'VERIFICATION_REQUIRED',
-        message: 'Direct upgrades are disabled. A Google Play purchaseToken and productId are required to activate Pro.',
+        message: 'Direct upgrades are disabled. A Google Play purchaseToken is required to activate Pro.',
       });
     }
     try {

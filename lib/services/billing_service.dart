@@ -191,10 +191,14 @@ class BillingService extends ChangeNotifier {
       late final PurchaseParam purchaseParam;
 
       if (defaultTargetPlatform == TargetPlatform.android && proProduct is GooglePlayProductDetails) {
+        final gpProduct = proProduct as GooglePlayProductDetails;
+        final offerToken = gpProduct.offerToken ??
+            gpProduct.productDetails.subscriptionOfferDetails?.firstOrNull?.offerIdToken;
         purchaseParam = GooglePlayPurchaseParam(
           productDetails: proProduct!,
           changeSubscriptionParam: null,
           applicationUserName: null,
+          offerToken: offerToken,
         );
       } else {
         purchaseParam = PurchaseParam(productDetails: proProduct!);
@@ -230,13 +234,13 @@ class BillingService extends ChangeNotifier {
             final token = _extractPurchaseToken(purchase) ?? purchase.verificationData.serverVerificationData;
             final orderId = purchase.purchaseID;
 
-            // Immediately notify persistent global listener to upgrade user
-            if (_onProStatusChanged != null) {
+            // Verify with backend first before granting Pro status
+            final verified = await _verifyPurchaseWithBackend(purchase);
+
+            // Notify persistent listener to upgrade user once verified
+            if (verified && _onProStatusChanged != null) {
               _onProStatusChanged!(true, purchaseToken: token, orderId: orderId);
             }
-
-            // Verify with backend
-            await _verifyPurchaseWithBackend(purchase);
 
             // Mandatory: complete purchase with Google Play to finalize transaction & prevent 3-day refund
             if (purchase.pendingCompletePurchase) {
@@ -313,7 +317,7 @@ class BillingService extends ChangeNotifier {
   }
 
   /// Verify purchase token with backend server. Pro is granted ONLY on success.
-  Future<void> _verifyPurchaseWithBackend(PurchaseDetails purchase) async {
+  Future<bool> _verifyPurchaseWithBackend(PurchaseDetails purchase) async {
     final purchaseToken = _extractPurchaseToken(purchase);
     if (purchaseToken == null || purchaseToken.isEmpty) {
       if (kDebugMode) {
@@ -322,9 +326,9 @@ class BillingService extends ChangeNotifier {
       errorMessage = 'Purchase verification failed: Missing purchase token';
       isProcessing = false;
       notifyListeners();
-      return;
+      return false;
     }
-    await verifyPurchaseToken(purchaseToken);
+    return await verifyPurchaseToken(purchaseToken);
   }
 
   /// Send a purchase token to the backend for server-side verification.

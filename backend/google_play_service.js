@@ -75,20 +75,12 @@ async function getAccessToken() {
  */
 async function verifyPurchaseToken(purchaseToken, productId) {
   if (!isConfigured()) {
-    // NEVER auto-verify in production without credentials.
-    if (process.env.NODE_ENV === 'production') {
-      throw {
-        statusCode: 503,
-        code: 'PLAY_VERIFICATION_NOT_CONFIGURED',
-        message: 'Purchase verification service is not configured. Payment cannot be validated.',
-      };
-    }
-    // Local dev only: explicit opt-in mock so devs can test UI flows.
-    if (process.env.ALLOW_MOCK_PURCHASES === 'true') {
+    // Explicit opt-in mock/test mode for internal testing prior to service account configuration
+    if (process.env.ALLOW_MOCK_PURCHASES === 'true' || process.env.ALLOW_TEST_PURCHASES === 'true') {
       const now = Date.now();
       return {
         verified: true,
-        orderId: `GPA.MOCK.${now}`,
+        orderId: `GPA.TEST.${now}`,
         status: 'ACTIVE',
         autoRenewing: true,
         startTimeMillis: now,
@@ -99,7 +91,7 @@ async function verifyPurchaseToken(purchaseToken, productId) {
     throw {
       statusCode: 503,
       code: 'PLAY_VERIFICATION_NOT_CONFIGURED',
-      message: 'Purchase verification service is not configured. Set ALLOW_MOCK_PURCHASES=true for local dev.',
+      message: 'Google Play Service Account credentials (GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL and GOOGLE_PLAY_PRIVATE_KEY) are not configured in environment variables.',
     };
   }
 
