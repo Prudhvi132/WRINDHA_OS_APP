@@ -6,6 +6,7 @@ import '../models/models.dart';
 import '../services/api_service.dart';
 import '../services/auth_api_service.dart';
 import '../services/feature_access_service.dart';
+import '../services/billing_service.dart';
 
 class AppProvider extends ChangeNotifier {
   ThemeMode _themeMode = ThemeMode.light;
@@ -1258,7 +1259,11 @@ class AppProvider extends ChangeNotifier {
     await ApiService.upgradeSubscription(provider: 'GOOGLE_PLAY');
   }
 
-  Future<void> upgradeToPremium({String provider = 'GOOGLE_PLAY'}) async {
+  Future<void> upgradeToPremium({
+    String provider = 'GOOGLE_PLAY',
+    String? purchaseToken,
+    String? orderId,
+  }) async {
     _user.isPremium = true;
     _user.subscriptionPlan = 'PRO';
     _subscription = UserSubscription(
@@ -1271,7 +1276,11 @@ class AppProvider extends ChangeNotifier {
     await _saveSession();
     await _saveSubscriptionState();
     notifyListeners();
-    await ApiService.upgradeSubscription(provider: provider);
+    await ApiService.upgradeSubscription(
+      provider: provider,
+      purchaseToken: purchaseToken,
+      orderId: orderId,
+    );
   }
 
   // Initial Data Setup & Persistence
@@ -1342,6 +1351,26 @@ class AppProvider extends ChangeNotifier {
       _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
 
       _recalculateMetrics();
+
+      // 3. Initialize Global Google Play Billing Lifecycle & Persistent Stream
+      BillingService().initialize(
+        onProStatusChanged: (isPro, {String? purchaseToken, String? orderId}) async {
+          if (isPro) {
+            await upgradeToPremium(
+              provider: 'GOOGLE_PLAY',
+              purchaseToken: purchaseToken,
+              orderId: orderId,
+            );
+          }
+        },
+      );
+
+      // 4. Auto-restore active purchases if user is logged in on Free plan
+      final isCurrentPro = _user.isPremium || _user.subscriptionPlan.toUpperCase() == 'PRO';
+      if (_isLoggedIn && !isCurrentPro) {
+        BillingService().restorePurchases();
+      }
+
       _isInitialized = true;
       notifyListeners();
     } catch (e) {

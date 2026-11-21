@@ -2131,10 +2131,20 @@ class ApiService {
     return null;
   }
 
-  static Future<Map<String, dynamic>> upgradeSubscription({String provider = 'GOOGLE_PLAY'}) async {
+  static Future<Map<String, dynamic>> upgradeSubscription({
+    String provider = 'GOOGLE_PLAY',
+    String? purchaseToken,
+    String? orderId,
+  }) async {
     Map<String, dynamic> result = {'success': true, 'isPro': true, 'isPremium': true, 'plan': 'pro'};
     try {
       final headers = await _getHeaders();
+      final bodyData = <String, dynamic>{
+        'provider': provider,
+        'plan': 'pro',
+        if (purchaseToken != null && purchaseToken.isNotEmpty) 'purchaseToken': purchaseToken,
+        if (orderId != null && orderId.isNotEmpty) 'orderId': orderId,
+      };
       // 1. Try Vercel Backend Endpoints
       for (final ep in ['/subscription/upgrade', '/subscription', '/subscription-upgrade']) {
         try {
@@ -2142,7 +2152,7 @@ class ApiService {
               .post(
                 Uri.parse('$baseUrl$ep'),
                 headers: headers,
-                body: jsonEncode({'provider': provider, 'plan': 'pro'}),
+                body: jsonEncode(bodyData),
               )
               .timeout(const Duration(seconds: 6), onTimeout: () => http.Response('{}', 408));
           if (response.statusCode == 200) {
