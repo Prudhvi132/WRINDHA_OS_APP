@@ -1,0 +1,12 @@
+# Archived API route files - not Vercel functions
+_archived_api_routes/
+
+# Backend source (loaded by api/[...path].js, not deployed directly)
+backend/
+
+# Flutter/Dart build artifacts
+build/
+.dart_tool/
+android/.gradle/
+*.aab
+*.apk

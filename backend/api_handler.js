@@ -150,7 +150,10 @@ async function clearAuthOtp(cleanEmail) {
   }
 }
 
-const JWT_SECRET = process.env.JWT_SECRET || 'wrindha_os_secure_production_secret_2026_key_super_secure';
+if (!process.env.JWT_SECRET) {
+  console.error('[SECURITY WARNING] JWT_SECRET environment variable is NOT set! Add it to Vercel Environment Variables immediately.');
+}
+const JWT_SECRET = process.env.JWT_SECRET || 'wrindha_os_secure_production_secret_2026_key_super_secure_CHANGE_ME';
 
 // -----------------------------------------------------------------------------
 // 1. UTILITY FUNCTIONS & CORS HEADERS
