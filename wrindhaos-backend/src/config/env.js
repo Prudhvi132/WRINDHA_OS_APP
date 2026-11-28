@@ -18,12 +18,28 @@ const isProduction = (process.env.NODE_ENV === 'production');
 
 // Fail loudly in production if critical secrets are missing
 if (isProduction) {
-  const requiredProductionKeys = ['JWT_SECRET', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'];
+  const requiredProductionKeys = [
+    'JWT_SECRET',
+    'SUPABASE_URL',
+    'SUPABASE_SERVICE_ROLE_KEY',
+  ];
   const missingKeys = requiredProductionKeys.filter((key) => !process.env[key]);
   if (missingKeys.length > 0) {
     console.error(`[FATAL] Missing required production environment variables: ${missingKeys.join(', ')}`);
     console.error(`[FATAL] Please configure these in your production environment or .env file.`);
     process.exit(1);
+  }
+
+  const optionalPaymentKeys = [
+    'GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL',
+    'GOOGLE_PLAY_PRIVATE_KEY',
+    'GOOGLE_PLAY_PACKAGE_NAME',
+    'GOOGLE_PLAY_SUBSCRIPTION_PRODUCT_ID',
+  ];
+  const missingPaymentKeys = optionalPaymentKeys.filter((key) => !process.env[key]);
+  if (missingPaymentKeys.length > 0) {
+    console.warn(`[WARN] Optional payment verification environment variables not set: ${missingPaymentKeys.join(', ')}`);
+    console.warn(`[WARN] Server-side Google Play subscription verification will operate in fallback mode.`);
   }
 }
 
@@ -57,10 +73,10 @@ const config = {
   },
 
   googlePlay: {
-    packageName: process.env.GOOGLE_PLAY_PACKAGE_NAME || 'com.wrindhaos.app',
+    packageName: process.env.GOOGLE_PLAY_PACKAGE_NAME || 'com.wrindha.app',
     serviceAccountEmail: process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL || '',
     privateKey: (process.env.GOOGLE_PLAY_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
-    subscriptionProductId: process.env.GOOGLE_PLAY_SUBSCRIPTION_PRODUCT_ID || 'wrindhaos_premium_monthly',
+    subscriptionProductId: process.env.GOOGLE_PLAY_SUBSCRIPTION_PRODUCT_ID || 'wrindha_pro_monthly',
   },
 
   fcm: {

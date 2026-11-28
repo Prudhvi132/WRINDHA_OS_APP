@@ -5,7 +5,9 @@ import '../config/subscription_config.dart';
 import '../models/models.dart';
 import '../services/api_service.dart';
 import '../services/auth_api_service.dart';
+import '../services/billing_service.dart';
 import '../services/feature_access_service.dart';
+import '../services/billing_service.dart';
 
 class AppProvider extends ChangeNotifier {
   ThemeMode _themeMode = ThemeMode.light;
@@ -15,6 +17,23 @@ class AppProvider extends ChangeNotifier {
   AppProvider() {
     loadThemePreference();
     _initData();
+    _initBilling();
+  }
+
+  Future<void> _initBilling() async {
+    await BillingService().initialize(
+      onProStatusChanged: (isPro, {String? purchaseToken, String? orderId}) {
+        if (isPro) {
+          // Grant Pro status globally across all screens and models
+          updateSubscriptionPlan(
+            SubscriptionPlanType.pro,
+            purchaseToken: purchaseToken,
+            orderId: orderId,
+            syncWithBackend: false, // BillingService already verifies with backend
+          );
+        }
+      },
+    );
   }
 
   void toggleTheme([bool? isDark]) {
@@ -136,7 +155,12 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void updateSubscriptionPlan(SubscriptionPlanType plan) {
+  void updateSubscriptionPlan(
+    SubscriptionPlanType plan, {
+    String? purchaseToken,
+    String? orderId,
+    bool syncWithBackend = true,
+  }) {
     _user.subscriptionPlan = plan.nameCode;
     _user.isPremium = plan.isPro;
     _subscription = UserSubscription(
@@ -145,11 +169,19 @@ class AppProvider extends ChangeNotifier {
       plan: plan.nameCode.toLowerCase(),
       status: 'active',
       startedAt: DateTime.now(),
+      paymentProvider: 'GOOGLE_PLAY',
     );
     _saveSession();
     _saveSubscriptionState();
     notifyListeners();
-    ApiService.upgradeSubscription(provider: 'GOOGLE_PLAY');
+    if (syncWithBackend && purchaseToken != null && purchaseToken.isNotEmpty) {
+      ApiService.upgradeSubscription(
+        provider: 'GOOGLE_PLAY',
+        purchaseToken: purchaseToken,
+        orderId: orderId,
+        productId: 'wrindha_pro_monthly',
+      );
+    }
   }
 
   Future<void> _saveSubscriptionState() async {
@@ -161,45 +193,36 @@ class AppProvider extends ChangeNotifier {
     } catch (_) {}
   }
 
+  /// Remote subscription state is the single source of truth.
+  /// - Remote Pro  -> adopt Pro locally.
+  /// - Remote Free -> downgrade locally (never re-push Pro from a stale cache).
+  /// - Remote unreachable -> keep the cached state temporarily, but do not
+  ///   push anything to the server (prevents self-upgrade exploits).
   Future<void> syncSubscription() async {
     try {
-      final isLocallyPro = _user.isPremium ||
-          _user.subscriptionPlan.toUpperCase() == 'PRO' ||
-          _subscription.isPro;
-
       final remoteSub = await ApiService.fetchUserSubscription();
       if (remoteSub != null) {
-        if (remoteSub.isPro || isLocallyPro) {
+        if (remoteSub.isPro) {
           _user.isPremium = true;
           _user.subscriptionPlan = 'PRO';
           _subscription = UserSubscription(
             id: remoteSub.id.isNotEmpty ? remoteSub.id : 'sub_pro_${_user.id}',
             userId: _user.id,
             plan: 'pro',
-            status: 'active',
+            status: remoteSub.status,
             startedAt: remoteSub.startedAt,
+            expiresAt: remoteSub.expiresAt,
+            paymentProvider: remoteSub.paymentProvider,
           );
-          await _saveSession();
-          await _saveSubscriptionState();
-          if (!remoteSub.isPro) {
-            await ApiService.upgradeSubscription(provider: 'LOCAL_SYNC');
-          }
         } else {
+          // Server explicitly says Free -> honor it.
           setSubscription(remoteSub);
         }
-      } else if (isLocallyPro) {
-        _user.isPremium = true;
-        _user.subscriptionPlan = 'PRO';
-        _subscription = UserSubscription(
-          id: 'sub_pro_${_user.id}',
-          userId: _user.id,
-          plan: 'pro',
-          status: 'active',
-          startedAt: DateTime.now(),
-        );
         await _saveSession();
         await _saveSubscriptionState();
       }
+      // remoteSub == null (backend unreachable / unauthenticated): keep cached
+      // state for offline UX but do NOT upgrade anything.
       notifyListeners();
     } catch (_) {}
   }
@@ -1242,23 +1265,14 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> checkoutSubscription(String plan, double basePrice) async {
-    _user.isPremium = true;
-    _user.subscriptionPlan = 'PRO';
-    _user.activeDiscountPercent = 0;
-    _subscription = UserSubscription(
-      id: 'sub_pro_${_user.id}',
-      userId: _user.id,
-      plan: 'pro',
-      status: 'active',
-      startedAt: DateTime.now(),
-    );
-    await _saveSession();
-    await _saveSubscriptionState();
-    notifyListeners();
-    await ApiService.upgradeSubscription(provider: 'GOOGLE_PLAY');
+    // Direct checkout is not a payment method in the Play Store app.
+    // Subscription changes must go through Google Play billing verification.
+    debugPrint('[AppProvider] checkoutSubscription ignored: use Google Play billing flow');
   }
 
-  Future<void> upgradeToPremium({String provider = 'GOOGLE_PLAY'}) async {
+  /// Grant Pro access locally after verification
+  Future<void> activateProFromVerifiedPurchase({required bool verified}) async {
+    if (!verified) return;
     _user.isPremium = true;
     _user.subscriptionPlan = 'PRO';
     _subscription = UserSubscription(
@@ -1267,11 +1281,41 @@ class AppProvider extends ChangeNotifier {
       plan: 'pro',
       status: 'active',
       startedAt: DateTime.now(),
+      paymentProvider: 'GOOGLE_PLAY',
     );
     await _saveSession();
     await _saveSubscriptionState();
     notifyListeners();
-    await ApiService.upgradeSubscription(provider: provider);
+    await syncSubscription();
+  }
+
+  Future<void> upgradeToPremium({
+    String provider = 'GOOGLE_PLAY',
+    String? purchaseToken,
+    String? orderId,
+    bool verified = false,
+  }) async {
+    _user.isPremium = true;
+    _user.subscriptionPlan = 'PRO';
+    _subscription = UserSubscription(
+      id: 'sub_pro_${_user.id}',
+      userId: _user.id,
+      plan: 'pro',
+      status: 'active',
+      startedAt: DateTime.now(),
+      paymentProvider: 'GOOGLE_PLAY',
+    );
+    await _saveSession();
+    await _saveSubscriptionState();
+    notifyListeners();
+    if (purchaseToken != null && purchaseToken.isNotEmpty) {
+      await ApiService.upgradeSubscription(
+        provider: provider,
+        purchaseToken: purchaseToken,
+        orderId: orderId,
+      );
+    }
+    await syncSubscription();
   }
 
   // Initial Data Setup & Persistence
@@ -1342,12 +1386,23 @@ class AppProvider extends ChangeNotifier {
       _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
 
       _recalculateMetrics();
+
+      // Auto-restore active purchases if user is logged in on Free plan
+      final isCurrentPro = _user.isPremium || _user.subscriptionPlan.toUpperCase() == 'PRO';
+      if (_isLoggedIn && !isCurrentPro) {
+        BillingService().restorePurchases();
+      }
+
       _isInitialized = true;
       notifyListeners();
+
+      // Pre-fetch Google Play Billing products silently in background on app boot
+      BillingService().queryProducts();
     } catch (e) {
       debugPrint('Error loading saved state: $e');
       _isInitialized = true;
       notifyListeners();
+      BillingService().queryProducts();
     }
   }
 
@@ -2266,6 +2321,28 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
+  /// Initialize Google Play Billing and restore past purchases.
+  /// Pro is granted ONLY after the backend verifies a purchase token.
+  Future<void> _initializeBilling() async {
+    try {
+      final billingService = BillingService();
+      await billingService.initialize(
+        onProStatusChanged: (isPro, {String? purchaseToken, String? orderId}) {
+          if (isPro && !_user.isPremium) {
+            // Called by BillingService only after backend verification succeeded.
+            activateProFromVerifiedPurchase(verified: true);
+          }
+        },
+      );
+
+      // Ask Google Play to re-deliver past purchases; each restored purchase
+      // is verified with the backend before Pro is granted.
+      await billingService.restorePurchases();
+    } catch (e) {
+      debugPrint('[AppProvider] Billing initialization error: $e');
+    }
+  }
+
   void recalculateAllUnitProgress() {
     bool changed = false;
     for (final u in _studyUnits) {
@@ -2797,6 +2874,15 @@ class AppProvider extends ChangeNotifier {
             status: 'active',
             startedAt: DateTime.now(),
           );
+          await _saveSession();
+          await _saveSubscriptionState();
+          changed = true;
+        } else if (!isRemotePro && (_user.isPremium || _user.subscriptionPlan.toUpperCase() == 'PRO')) {
+          // Remote says Free -> stale local cache (or expired subscription).
+          // Downgrade locally; never push Pro back to the server.
+          _user.isPremium = false;
+          _user.subscriptionPlan = 'FREE';
+          _subscription = UserSubscription.defaultFree(_user.id);
           await _saveSession();
           await _saveSubscriptionState();
           changed = true;

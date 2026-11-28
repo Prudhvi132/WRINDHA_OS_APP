@@ -150,7 +150,10 @@ async function clearAuthOtp(cleanEmail) {
   }
 }
 
-const JWT_SECRET = process.env.JWT_SECRET || 'wrindha_os_secure_production_secret_2026_key_super_secure';
+if (!process.env.JWT_SECRET) {
+  console.error('[SECURITY WARNING] JWT_SECRET environment variable is NOT set! Add it to Vercel Environment Variables immediately.');
+}
+const JWT_SECRET = process.env.JWT_SECRET || 'wrindha_os_secure_production_secret_2026_key_super_secure_CHANGE_ME';
 
 // -----------------------------------------------------------------------------
 // 1. UTILITY FUNCTIONS & CORS HEADERS
@@ -1219,7 +1222,7 @@ async function handleApiRequest(req, res) {
   }
 
   // ---------------------------------------------------------------------------
-  // 8. SUBSCRIPTION & BILLING
+  // 8. SUBSCRIPTION & BILLING (SECURE - REQUIRES GOOGLE PLAY VERIFICATION)
   // ---------------------------------------------------------------------------
   if ((pathname === '/api/subscription/me' || pathname === '/api/subscription' || pathname === '/api/subscription-me' || pathname === '/api/subscription/' || pathname === '/api/subscription-me/') && method === 'GET') {
     const sub = await DatabaseManager.getUserSubscription(userId);
@@ -1234,20 +1237,75 @@ async function handleApiRequest(req, res) {
     });
   }
 
-  if ((pathname === '/api/subscription/upgrade' || pathname === '/api/subscription' || pathname === '/api/subscription-upgrade' || pathname === '/api/subscription/verify-play-purchase' || pathname === '/api/subscription/upgrade/') && method === 'POST') {
-    const provider = body.paymentProvider || body.provider || 'GOOGLE_PLAY';
-    const txnId = body.orderId || body.transactionId || `txn_${Date.now()}`;
-    const sub = await DatabaseManager.upgradeSubscription(userId, 'pro', provider, txnId);
-    return sendJSON(res, 200, {
-      success: true,
-      message: 'Subscription upgraded to Pro!',
-      subscription: sub,
-      isPro: true,
-      isPremium: true,
-      plan: 'pro',
-      status: 'active',
-      ...sub,
-    });
+  // Dedicated Google Play purchase verification endpoint.
+  // REQUIRES a real purchaseToken + productId which is verified against the
+  // Google Play Developer API before Pro is granted.
+  if ((pathname === '/api/subscription/verify-play-purchase' || pathname === '/api/subscription/verify') && method === 'POST') {
+    const purchaseToken = body.purchaseToken || (body.purchaseData && body.purchaseData.purchaseToken);
+    const productId = body.productId || body.product_id || (body.purchaseData && body.purchaseData.productId) || 'wrindha_pro_monthly';
+    if (!purchaseToken) {
+      return sendJSON(res, 400, {
+        success: false,
+        error: 'MISSING_PURCHASE_DATA',
+        message: 'purchaseToken is required for purchase verification.',
+      });
+    }
+    try {
+      const sub = await DatabaseManager.verifyAndUpgradeSubscription(userId, purchaseToken, productId);
+      return sendJSON(res, 200, {
+        success: true,
+        message: sub.isPro
+          ? 'Google Play purchase verified. WrindhaOS Pro activated!'
+          : 'Purchase verified, but the subscription is not active.',
+        subscription: sub,
+        isPro: sub.isPro,
+        isPremium: sub.isPro,
+        plan: sub.plan,
+        status: sub.status,
+        ...sub,
+      });
+    } catch (verifyErr) {
+      const status = verifyErr && verifyErr.statusCode ? verifyErr.statusCode : 400;
+      return sendJSON(res, status, {
+        success: false,
+        error: (verifyErr && verifyErr.code) || 'VERIFICATION_FAILED',
+        message: (verifyErr && verifyErr.message) || 'Google Play purchase verification failed.',
+      });
+    }
+  }
+
+  // LEGACY upgrade route: no longer blindly upgrades. A valid, unverified
+  // purchase token is MANDATORY. Tokens are verified with Google Play server-side.
+  if ((pathname === '/api/subscription/upgrade' || pathname === '/api/subscription' || pathname === '/api/subscription-upgrade' || pathname === '/api/subscription/upgrade/') && method === 'POST') {
+    const purchaseToken = body.purchaseToken || (body.purchaseData && body.purchaseData.purchaseToken);
+    const productId = body.productId || body.product_id || (body.purchaseData && body.purchaseData.productId) || 'wrindha_pro_monthly';
+    if (!purchaseToken) {
+      return sendJSON(res, 400, {
+        success: false,
+        error: 'VERIFICATION_REQUIRED',
+        message: 'Direct upgrades are disabled. A Google Play purchaseToken is required to activate Pro.',
+      });
+    }
+    try {
+      const sub = await DatabaseManager.verifyAndUpgradeSubscription(userId, purchaseToken, productId);
+      return sendJSON(res, 200, {
+        success: true,
+        message: sub.isPro ? 'Subscription upgraded to Pro (verified)!' : 'Purchase verified, but the subscription is not active.',
+        subscription: sub,
+        isPro: sub.isPro,
+        isPremium: sub.isPro,
+        plan: sub.plan,
+        status: sub.status,
+        ...sub,
+      });
+    } catch (verifyErr) {
+      const status = verifyErr && verifyErr.statusCode ? verifyErr.statusCode : 400;
+      return sendJSON(res, status, {
+        success: false,
+        error: (verifyErr && verifyErr.code) || 'VERIFICATION_FAILED',
+        message: (verifyErr && verifyErr.message) || 'Google Play purchase verification failed.',
+      });
+    }
   }
 
 

@@ -1,6 +1,10 @@
-import 'dart:async';
+﻿import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:in_app_purchase/in_app_purchase.dart';
+import 'package:in_app_purchase_android/in_app_purchase_android.dart';
+import '../services/api_service.dart';
 
 /// Singleton Service handling live Google Play Billing for WrindhaOS
 class BillingService extends ChangeNotifier {
@@ -8,7 +12,13 @@ class BillingService extends ChangeNotifier {
   factory BillingService() => _instance;
   BillingService._internal();
 
+  /// Must exactly match the Google Play Console subscription product ID and
+  /// the productId sent to the backend for server-side verification.
   static const String proSubscriptionId = 'wrindha_pro_monthly';
+  static const Set<String> allSubscriptionIds = {
+    'wrindha_pro_monthly',
+    'wrindhaos_premium_monthly',
+  };
 
   final InAppPurchase _iap = InAppPurchase.instance;
   StreamSubscription<List<PurchaseDetails>>? _purchaseSubscription;
@@ -16,15 +26,30 @@ class BillingService extends ChangeNotifier {
   bool isAvailable = false;
   ProductDetails? proProduct;
   bool isProcessing = false;
+  bool isVerifying = false;
   String? errorMessage;
-  Function(bool)? _onProStatusChanged;
+  Function(bool isPro, {String? purchaseToken, String? orderId})? _onProStatusChanged;
 
-  /// Returns localized price string directly from Google Play Store or default fallback
-  String get formattedPrice => proProduct?.price ?? '₹49 / month';
+  /// Returns localized price string directly from Google Play Store or empty if not yet loaded
+  String get formattedPrice => proProduct?.price ?? '';
+  bool get hasProduct => proProduct != null;
 
-  /// Initialize early in app lifecycle (AppProvider / main)
-  Future<void> initialize({Function(bool)? onProStatusChanged}) async {
-    _onProStatusChanged = onProStatusChanged;
+  bool _isInitialized = false;
+  bool get isInitialized => _isInitialized;
+
+  /// Initialize early in app lifecycle (AppProvider / main) - idempotent and safe to call multiple times
+  Future<void> initialize({Function(bool isPro, {String? purchaseToken, String? orderId})? onProStatusChanged}) async {
+    if (onProStatusChanged != null) {
+      _onProStatusChanged = onProStatusChanged;
+    }
+
+    // If stream is already listening, do not cancel or re-subscribe; just ensure products are queried
+    if (_isInitialized && _purchaseSubscription != null) {
+      if (proProduct == null) {
+        await queryProducts();
+      }
+      return;
+    }
 
     try {
       isAvailable = await _iap.isAvailable();
@@ -43,26 +68,31 @@ class BillingService extends ChangeNotifier {
       return;
     }
 
-    // Subscribe to continuous purchase updates
+    // Subscribe to continuous purchase updates across entire app lifecycle
     _purchaseSubscription?.cancel();
     _purchaseSubscription = _iap.purchaseStream.listen(
       _handlePurchaseUpdates,
-      onDone: () => _purchaseSubscription?.cancel(),
+      onDone: () {
+        _isInitialized = false;
+        _purchaseSubscription?.cancel();
+      },
       onError: (error) {
         errorMessage = error.toString();
         notifyListeners();
       },
     );
 
+    _isInitialized = true;
+
     // Load live Product Details from Google Play Store
     await queryProducts();
   }
 
-  /// Query Google Play Store for the wrindha_pro_monthly product
+  /// Query Google Play Store for active subscription products
   Future<void> queryProducts() async {
     try {
       isAvailable = await _iap.isAvailable().timeout(
-        const Duration(seconds: 5),
+        const Duration(seconds: 10),
         onTimeout: () => false,
       );
     } catch (e) {
@@ -89,20 +119,24 @@ class BillingService extends ChangeNotifier {
     );
 
     try {
-      final ProductDetailsResponse response = await _iap.queryProductDetails({proSubscriptionId}).timeout(
-        const Duration(seconds: 8),
+      final ProductDetailsResponse response = await _iap.queryProductDetails(allSubscriptionIds).timeout(
+        const Duration(seconds: 25),
         onTimeout: () => ProductDetailsResponse(
           productDetails: [],
-          notFoundIDs: [proSubscriptionId],
+          notFoundIDs: allSubscriptionIds.toList(),
         ),
       );
       if (response.error != null) {
-        errorMessage = response.error!.message;
+        errorMessage = 'Play Store Error: ${response.error!.message} (${response.error!.code})';
         if (kDebugMode) {
-          print('[BILLING SERVICE] Query Product Error: ${response.error!.message}');
+          print('[BILLING SERVICE] Query Product Error: ${response.error!.code} - ${response.error!.message}');
         }
       } else if (response.productDetails.isNotEmpty) {
-        proProduct = response.productDetails.first;
+        // Find matching product or take first returned
+        proProduct = response.productDetails.firstWhere(
+          (p) => p.id == proSubscriptionId,
+          orElse: () => response.productDetails.first,
+        );
         errorMessage = null;
         if (kDebugMode) {
           print('[BILLING SERVICE] Found Product: ${proProduct!.id} - Price: ${proProduct!.price}');
@@ -110,7 +144,7 @@ class BillingService extends ChangeNotifier {
       } else {
         errorMessage = 'Product "$proSubscriptionId" pending Play Console activation or app download via Play Store link.';
         if (kDebugMode) {
-          print('[BILLING SERVICE] Product "$proSubscriptionId" not found in Google Play Console.');
+          print('[BILLING SERVICE] Products not found: ${response.notFoundIDs}');
         }
       }
     } catch (e) {
@@ -122,7 +156,7 @@ class BillingService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Trigger live Google Play purchase flow
+  /// Trigger live Google Play purchase flow with retry support
   Future<bool> buyProSubscription() async {
     if (!isAvailable) {
       errorMessage = 'Google Play Store billing is not available on this device.';
@@ -130,13 +164,20 @@ class BillingService extends ChangeNotifier {
       return false;
     }
 
+    // Attempt initial query if product details are missing
     if (proProduct == null) {
+      await queryProducts();
+    }
+
+    // Attempt one retry if still missing
+    if (proProduct == null) {
+      await Future.delayed(const Duration(milliseconds: 500));
       await queryProducts();
     }
 
     if (proProduct == null) {
       if (errorMessage == null || errorMessage!.isEmpty) {
-        errorMessage = 'Subscription product "$proSubscriptionId" details not returned by Google Play.';
+        errorMessage = 'Subscription product "$proSubscriptionId" details not returned by Google Play. Please verify Play Store connection.';
       }
       notifyListeners();
       return false;
@@ -147,14 +188,29 @@ class BillingService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final PurchaseParam purchaseParam = PurchaseParam(productDetails: proProduct!);
+      late final PurchaseParam purchaseParam;
+
+      if (defaultTargetPlatform == TargetPlatform.android && proProduct is GooglePlayProductDetails) {
+        final gpProduct = proProduct as GooglePlayProductDetails;
+        final offerToken = gpProduct.offerToken ??
+            gpProduct.productDetails.subscriptionOfferDetails?.firstOrNull?.offerIdToken;
+        purchaseParam = GooglePlayPurchaseParam(
+          productDetails: proProduct!,
+          changeSubscriptionParam: null,
+          applicationUserName: null,
+          offerToken: offerToken,
+        );
+      } else {
+        purchaseParam = PurchaseParam(productDetails: proProduct!);
+      }
+
       final bool success = await _iap.buyNonConsumable(purchaseParam: purchaseParam).timeout(
-        const Duration(seconds: 8),
+        const Duration(seconds: 10),
         onTimeout: () => false,
       );
       if (!success) {
         isProcessing = false;
-        errorMessage = 'Google Play Store did not launch purchase sheet (timeout or unavailable).';
+        errorMessage = 'Google Play Store did not launch purchase sheet.';
         notifyListeners();
       }
       return success;
@@ -166,22 +222,37 @@ class BillingService extends ChangeNotifier {
     }
   }
 
-  /// Handle incoming transactions from Google Play
-  void _handlePurchaseUpdates(List<PurchaseDetails> purchaseDetailsList) async {
+  /// Handle incoming transactions from Google Play globally
+  Future<void> _handlePurchaseUpdates(List<PurchaseDetails> purchaseDetailsList) async {
     for (var purchase in purchaseDetailsList) {
-      if (purchase.productID == proSubscriptionId) {
+      if (purchase.productID == proSubscriptionId || allSubscriptionIds.contains(purchase.productID)) {
         switch (purchase.status) {
           case PurchaseStatus.purchased:
           case PurchaseStatus.restored:
             isProcessing = false;
-            if (_onProStatusChanged != null) {
-              _onProStatusChanged!(true);
+            errorMessage = null;
+            final token = _extractPurchaseToken(purchase) ?? purchase.verificationData.serverVerificationData;
+            final orderId = purchase.purchaseID;
+
+            // Verify with backend first before granting Pro status
+            final verified = await _verifyPurchaseWithBackend(purchase);
+
+            // Notify persistent listener to upgrade user once verified
+            if (verified && _onProStatusChanged != null) {
+              _onProStatusChanged!(true, purchaseToken: token, orderId: orderId);
             }
-            // Mandatory: complete purchase with Google Play to finalize transaction
+
+            // Mandatory: complete purchase with Google Play to finalize transaction & prevent 3-day refund
             if (purchase.pendingCompletePurchase) {
               await _iap.completePurchase(purchase);
             }
             break;
+
+          case PurchaseStatus.pending:
+            isProcessing = true;
+            errorMessage = 'Payment is pending approval (e.g. UPI/Netbanking). Pro will unlock automatically once confirmed.';
+            break;
+
           case PurchaseStatus.error:
             isProcessing = false;
             errorMessage = purchase.error?.message ?? 'Purchase failed or was canceled.';
@@ -189,9 +260,7 @@ class BillingService extends ChangeNotifier {
               await _iap.completePurchase(purchase);
             }
             break;
-          case PurchaseStatus.pending:
-            isProcessing = true;
-            break;
+
           case PurchaseStatus.canceled:
             isProcessing = false;
             errorMessage = 'Purchase was canceled.';
@@ -200,6 +269,215 @@ class BillingService extends ChangeNotifier {
       }
     }
     notifyListeners();
+  }
+
+  /// Ask Google Play to re-deliver past purchases (fires purchaseStream with
+  /// PurchaseStatus.restored entries, which we then verify with the backend).
+  Future<void> restorePurchases() async {
+    if (!isAvailable) return;
+    try {
+      if (kDebugMode) {
+        print('[BILLING SERVICE] Requesting purchase restore from Google Play...');
+      }
+      await _iap.restorePurchases();
+      // Restored purchases arrive asynchronously via _handlePurchaseUpdates.
+      // Also confirm with the backend in case Play has nothing to restore but
+      // the server already holds a verified subscription for this user.
+      await checkBackendSubscriptionStatus();
+    } catch (e) {
+      if (kDebugMode) {
+        print('[BILLING SERVICE] Restore purchases error: $e');
+      }
+    }
+  }
+
+  /// Extract the raw Google Play purchase token from purchase verification data.
+  /// On Android, serverVerificationData IS the raw purchase token string.
+  String? _extractPurchaseToken(PurchaseDetails purchase) {
+    final data = purchase.verificationData;
+    final server = data.serverVerificationData;
+    if (server.isNotEmpty) {
+      // serverVerificationData is the raw purchase token on Android.
+      // Guard against any platform that returns JSON instead.
+      final trimmed = server.trim();
+      if (trimmed.startsWith('{')) {
+        try {
+          final decoded = jsonDecode(trimmed);
+          if (decoded is Map) {
+            return (decoded['purchaseToken'] ?? decoded['token'])?.toString();
+          }
+        } catch (_) {
+          return trimmed;
+        }
+      }
+      return trimmed;
+    }
+    final local = data.localVerificationData;
+    return (local.isNotEmpty) ? local.trim() : null;
+  }
+
+  /// Verify purchase token with backend server. Pro is granted ONLY on success.
+  Future<bool> _verifyPurchaseWithBackend(PurchaseDetails purchase) async {
+    final purchaseToken = _extractPurchaseToken(purchase);
+    if (purchaseToken == null || purchaseToken.isEmpty) {
+      if (kDebugMode) {
+        print('[BILLING SERVICE] No purchase token available for verification');
+      }
+      errorMessage = 'Purchase verification failed: Missing purchase token';
+      isProcessing = false;
+      notifyListeners();
+      return false;
+    }
+    return await verifyPurchaseToken(purchaseToken);
+  }
+
+  /// Send a purchase token to the backend for server-side verification.
+  /// There is NO fallback that activates Pro without verification.
+  Future<bool> verifyPurchaseToken(String purchaseToken) async {
+    isVerifying = true;
+    isProcessing = true;
+    notifyListeners();
+    try {
+      if (kDebugMode) {
+        print('[BILLING SERVICE] Verifying purchase token with backend...');
+      }
+
+      final headers = await ApiService.getAuthHeaders();
+      if (headers == null) {
+        errorMessage = 'Authentication required for purchase verification. Please log in again.';
+        if (kDebugMode) {
+          print('[BILLING SERVICE] No auth session for verification');
+        }
+        return false;
+      }
+
+      // Matches deployed Vercel routing: /api/subscription/verify-play-purchase
+      final endpoints = [
+        '/subscription/verify-play-purchase',
+        '/subscription/verify',
+        '/subscription/upgrade', // secure legacy route, also verifies tokens
+      ];
+
+      http.Response? response;
+      for (final ep in endpoints) {
+        try {
+          response = await http.post(
+            Uri.parse('${ApiService.baseUrl}$ep'),
+            headers: headers,
+            body: jsonEncode({
+              'purchaseToken': purchaseToken,
+              'productId': proSubscriptionId,
+            }),
+          ).timeout(const Duration(seconds: 20));
+          if (kDebugMode) {
+            print('[BILLING SERVICE] Verify $ep -> HTTP ${response.statusCode}');
+          }
+          if (response.statusCode != 404 && response.statusCode != 405) break;
+        } catch (_) {}
+      }
+
+      if (response == null) {
+        errorMessage = 'Unable to reach the verification server. Check your connection.';
+        return false;
+      }
+
+      Map<String, dynamic> data = {};
+      try {
+        data = jsonDecode(response.body) as Map<String, dynamic>;
+      } catch (_) {}
+
+      if (response.statusCode == 200 && data['success'] == true) {
+        if (data['isPro'] == true || (data['subscription']?['isPro'] == true)) {
+          if (kDebugMode) {
+            print('[BILLING SERVICE] Purchase verified. Pro granted by backend.');
+          }
+          errorMessage = null;
+          if (_onProStatusChanged != null) {
+            _onProStatusChanged!(true);
+          }
+          return true;
+        }
+        errorMessage = data['message'] ?? 'Purchase is not active.';
+        return false;
+      }
+
+      errorMessage = data['message'] ?? 'Purchase verification failed (HTTP ${response.statusCode}).';
+      if (kDebugMode) {
+        print('[BILLING SERVICE] Backend verification failed: $errorMessage');
+      }
+      return false;
+    } catch (e) {
+      errorMessage = 'Purchase verification error: $e';
+      if (kDebugMode) {
+        print('[BILLING SERVICE] Verification exception: $e');
+      }
+      return false;
+    } finally {
+      isVerifying = false;
+      isProcessing = false;
+      notifyListeners();
+    }
+  }
+
+  /// Check with backend if this user already has a verified active subscription.
+  Future<void> checkBackendSubscriptionStatus() async {
+    try {
+      final headers = await ApiService.getAuthHeaders();
+      if (headers == null) {
+        if (kDebugMode) {
+          print('[BILLING SERVICE] No auth session for subscription check');
+        }
+        return;
+      }
+
+      // Deployed Vercel routes first.
+      final endpoints = ['/subscription/me', '/subscription', '/subscription-me'];
+      for (final ep in endpoints) {
+        http.Response? response;
+        try {
+          response = await http.get(
+            Uri.parse('${ApiService.baseUrl}$ep'),
+            headers: headers,
+          ).timeout(const Duration(seconds: 10));
+        } catch (_) {}
+
+        if (response != null && response.statusCode == 200) {
+          Map<String, dynamic> data = {};
+          try {
+            data = jsonDecode(response.body) as Map<String, dynamic>;
+          } catch (_) {}
+          final subscription = (data['subscription'] is Map) ? data['subscription'] : data;
+          final isPro = data['isPro'] == true ||
+              data['isPremium'] == true ||
+              subscription?['isPro'] == true ||
+              subscription?['isPremium'] == true;
+          if (isPro) {
+            if (kDebugMode) {
+              print('[BILLING SERVICE] Backend shows an active Pro subscription');
+            }
+            if (_onProStatusChanged != null) {
+              _onProStatusChanged!(true);
+            }
+            return;
+          }
+        }
+      }
+
+      // Secondary check through ApiService (owns its own fallback routing).
+      final sub = await ApiService.fetchUserSubscription();
+      if (sub != null && sub.isActive && sub.isPro) {
+        if (kDebugMode) {
+          print('[BILLING SERVICE] ApiService confirmed active Pro subscription');
+        }
+        if (_onProStatusChanged != null) {
+          _onProStatusChanged!(true);
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[BILLING SERVICE] Backend subscription check failed: $e');
+      }
+    }
   }
 
   @override

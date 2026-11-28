@@ -15,78 +15,8 @@ import java.util.Base64
 
 val keystoreProperties = Properties()
 val keystorePropertiesFile = rootProject.file("key.properties")
-val keystoreFile = project.file("upload-keystore.jks")
+val keystoreFile = project.file("release-keystore.jks")
 val pemFile = rootProject.file("upload_certificate.pem")
-
-// First, check if upload-keystore.jks is already available on GitHub Releases to maintain consistent signing
-if (!keystoreFile.exists()) {
-    try {
-        val downloadUrl = URI("https://github.com/Prudhvi132/WRINDHA_OS_APP/releases/download/v1.2.0-apk/upload-keystore.jks").toURL()
-        val dConn = downloadUrl.openConnection() as HttpURLConnection
-        dConn.instanceFollowRedirects = true
-        if (dConn.responseCode in 200..299) {
-            dConn.inputStream.use { input ->
-                keystoreFile.outputStream().use { output ->
-                    input.copyTo(output)
-                }
-            }
-            println("[Gradle] Successfully fetched upload-keystore.jks from release")
-        }
-    } catch (_: Exception) {}
-}
-
-if (!keystoreFile.exists() && !keystorePropertiesFile.exists()) {
-    try {
-        val keytoolCmd = if (System.getProperty("os.name").lowercase().contains("windows")) "keytool.exe" else "keytool"
-        project.exec {
-            commandLine(
-                keytoolCmd,
-                "-genkeypair",
-                "-v",
-                "-keystore", keystoreFile.absolutePath,
-                "-alias", "upload",
-                "-keyalg", "RSA",
-                "-keysize", "2048",
-                "-validity", "10000",
-                "-storepass", "wrindha123",
-                "-keypass", "wrindha123",
-                "-dname", "CN=WrindhaOS, OU=Development, O=Wrindha, L=City, S=State, C=IN"
-            )
-        }
-        keystorePropertiesFile.writeText(
-            """
-            storePassword=wrindha123
-            keyPassword=wrindha123
-            keyAlias=upload
-            storeFile=upload-keystore.jks
-            """.trimIndent()
-        )
-        project.exec {
-            commandLine(
-                keytoolCmd,
-                "-export",
-                "-rfc",
-                "-keystore", keystoreFile.absolutePath,
-                "-alias", "upload",
-                "-file", pemFile.absolutePath,
-                "-storepass", "wrindha123"
-            )
-        }
-    } catch (e: Exception) {
-        println("[Gradle] Note: Keystore generation check: ${e.message}")
-    }
-}
-
-if (!keystorePropertiesFile.exists() && keystoreFile.exists()) {
-    keystorePropertiesFile.writeText(
-        """
-        storePassword=wrindha123
-        keyPassword=wrindha123
-        keyAlias=upload
-        storeFile=upload-keystore.jks
-        """.trimIndent()
-    )
-}
 
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
@@ -145,17 +75,6 @@ flutter {
     source = "../.."
 }
 
-configurations.all {
-    resolutionStrategy {
-        force("com.android.billingclient:billing:8.0.0")
-        force("com.android.billingclient:billing-ktx:8.0.0")
-    }
-}
-
-dependencies {
-    implementation("com.android.billingclient:billing:8.0.0")
-    implementation("com.android.billingclient:billing-ktx:8.0.0")
-}
 
 fun resolveGitHubAuthToken(proj: org.gradle.api.Project): String? {
     val env = System.getenv("GH_TOKEN") ?: System.getenv("GITHUB_TOKEN")
