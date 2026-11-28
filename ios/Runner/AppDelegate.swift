@@ -12,5 +12,23 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "ScreenWakePlugin") {
+      let channel = FlutterMethodChannel(
+        name: "com.wrindha.app/wakelock",
+        binaryMessenger: registrar.messenger()
+      )
+      channel.setMethodCallHandler { call, result in
+        if call.method == "setKeepScreenOn" {
+          let args = call.arguments as? [String: Any]
+          let enabled = args?["enabled"] as? Bool ?? false
+          DispatchQueue.main.async {
+            UIApplication.shared.isIdleTimerDisabled = enabled
+          }
+          result(nil)
+        } else {
+          result(FlutterMethodNotImplemented)
+        }
+      }
+    }
   }
 }

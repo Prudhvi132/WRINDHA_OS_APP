@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../config/subscription_config.dart';
 import '../providers/app_provider.dart';
+import '../services/screen_wake_service.dart';
 import '../widgets/pro_feature_guard.dart';
 import '../widgets/pro_upgrade_dialog.dart';
 import '../theme/app_theme.dart';
@@ -15,16 +16,19 @@ class FocusTimerScreen extends StatefulWidget {
 }
 
 class _FocusTimerScreenState extends State<FocusTimerScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late TabController _tabController;
 
   // 1. STOPWATCH STATE
   int _stopwatchSeconds = 0;
+  int _stopwatchBaseSeconds = 0;
+  DateTime? _stopwatchAnchorTime;
   bool _isStopwatchRunning = false;
   Timer? _stopwatchTimer;
 
   // 2. POMODORO STATE
   int _pomodoroSeconds = 25 * 60; // 25 Minutes Focus
+  DateTime? _pomodoroEndTime;
   bool _isPomodoroRunning = false;
   bool _isBreakMode = false;
   Timer? _pomodoroTimer;
@@ -32,7 +36,72 @@ class _FocusTimerScreenState extends State<FocusTimerScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _tabController = TabController(length: 2, vsync: this);
+  }
+
+  void _syncWakelock({bool force = false}) {
+    ScreenWakeService.setKeepScreenOn(
+      _isStopwatchRunning || _isPomodoroRunning,
+      force: force,
+    );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      if (_isStopwatchRunning && _stopwatchAnchorTime != null) {
+        _syncStopwatchElapsed();
+      }
+      if (_isPomodoroRunning && _pomodoroEndTime != null) {
+        _syncPomodoroRemaining();
+      }
+      _syncWakelock(force: true);
+    }
+  }
+
+  void _syncStopwatchElapsed() {
+    if (!mounted || _stopwatchAnchorTime == null) return;
+    final elapsed =
+        _stopwatchBaseSeconds +
+        DateTime.now().difference(_stopwatchAnchorTime!).inSeconds;
+    setState(() {
+      _stopwatchSeconds = elapsed.clamp(0, 86400);
+    });
+  }
+
+  void _syncPomodoroRemaining() {
+    if (!mounted || _pomodoroEndTime == null) return;
+    final remaining =
+        (_pomodoroEndTime!.difference(DateTime.now()).inMilliseconds / 1000)
+            .ceil();
+    if (remaining > 0) {
+      setState(() => _pomodoroSeconds = remaining);
+      return;
+    }
+
+    _pomodoroTimer?.cancel();
+    _pomodoroEndTime = null;
+    final provider = Provider.of<AppProvider>(context, listen: false);
+    final isFocusDone = !_isBreakMode;
+    if (isFocusDone) {
+      provider.recordFocusSession(25);
+    }
+    setState(() {
+      _isPomodoroRunning = false;
+      _isBreakMode = !_isBreakMode;
+      _pomodoroSeconds = _isBreakMode ? 5 * 60 : 25 * 60;
+    });
+    _syncWakelock();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _isBreakMode
+              ? '🍅 Pomodoro session complete! +25m focus logged. Take a 5-minute break.'
+              : '⚡ Break over! Back to 25-minute Pomodoro focus session.',
+        ),
+      ),
+    );
   }
 
   // --- STOPWATCH LOGIC ---
@@ -44,15 +113,21 @@ class _FocusTimerScreenState extends State<FocusTimerScreen>
     }
     if (_isStopwatchRunning) {
       _stopwatchTimer?.cancel();
+      _syncStopwatchElapsed();
+      _stopwatchAnchorTime = null;
       setState(() => _isStopwatchRunning = false);
+      _syncWakelock();
       if (_stopwatchSeconds >= 60) {
         final loggedMins = (_stopwatchSeconds / 60).round();
         provider.recordFocusSession(loggedMins);
       }
     } else {
+      _stopwatchBaseSeconds = _stopwatchSeconds;
+      _stopwatchAnchorTime = DateTime.now();
       setState(() => _isStopwatchRunning = true);
-      _stopwatchTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-        setState(() => _stopwatchSeconds++);
+      _syncWakelock();
+      _stopwatchTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        _syncStopwatchElapsed();
       });
     }
   }
@@ -60,6 +135,11 @@ class _FocusTimerScreenState extends State<FocusTimerScreen>
   void _resetStopwatch() {
     final provider = Provider.of<AppProvider>(context, listen: false);
     _stopwatchTimer?.cancel();
+    if (_isStopwatchRunning && _stopwatchAnchorTime != null) {
+      _syncStopwatchElapsed();
+    }
+    _stopwatchAnchorTime = null;
+    _stopwatchBaseSeconds = 0;
     if (_stopwatchSeconds >= 60) {
       final loggedMins = (_stopwatchSeconds / 60).round();
       provider.recordFocusSession(loggedMins);
@@ -68,6 +148,7 @@ class _FocusTimerScreenState extends State<FocusTimerScreen>
       _stopwatchSeconds = 0;
       _isStopwatchRunning = false;
     });
+    _syncWakelock();
   }
 
   // --- POMODORO LOGIC ---
@@ -79,42 +160,34 @@ class _FocusTimerScreenState extends State<FocusTimerScreen>
     }
     if (_isPomodoroRunning) {
       _pomodoroTimer?.cancel();
+      if (_pomodoroEndTime != null) {
+        final remaining =
+            (_pomodoroEndTime!.difference(DateTime.now()).inMilliseconds / 1000)
+                .ceil();
+        _pomodoroSeconds = remaining.clamp(0, 86400);
+      }
+      _pomodoroEndTime = null;
       setState(() => _isPomodoroRunning = false);
+      _syncWakelock();
     } else {
+      _pomodoroEndTime = DateTime.now().add(Duration(seconds: _pomodoroSeconds));
       setState(() => _isPomodoroRunning = true);
-      _pomodoroTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-        if (_pomodoroSeconds > 0) {
-          setState(() => _pomodoroSeconds--);
-        } else {
-          _pomodoroTimer?.cancel();
-          final isFocusDone = !_isBreakMode;
-          if (isFocusDone) {
-            provider.recordFocusSession(25);
-          }
-          setState(() {
-            _isPomodoroRunning = false;
-            _isBreakMode = !_isBreakMode;
-            _pomodoroSeconds = _isBreakMode ? 5 * 60 : 25 * 60;
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(_isBreakMode
-                  ? '🍅 Pomodoro session complete! +25m focus logged. Take a 5-minute break.'
-                  : '⚡ Break over! Back to 25-minute Pomodoro focus session.'),
-            ),
-          );
-        }
+      _syncWakelock();
+      _pomodoroTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        _syncPomodoroRemaining();
       });
     }
   }
 
   void _resetPomodoro() {
     _pomodoroTimer?.cancel();
+    _pomodoroEndTime = null;
     setState(() {
       _isPomodoroRunning = false;
       _isBreakMode = false;
       _pomodoroSeconds = 25 * 60;
     });
+    _syncWakelock();
   }
 
   void _switchPomodoroMode(bool isBreak) {
@@ -126,15 +199,24 @@ class _FocusTimerScreenState extends State<FocusTimerScreen>
   }
 
   void _adjustStopwatch(int deltaSeconds) {
+    final updated = (_stopwatchSeconds + deltaSeconds).clamp(0, 86400);
     setState(() {
-      _stopwatchSeconds = (_stopwatchSeconds + deltaSeconds).clamp(0, 86400);
+      _stopwatchSeconds = updated;
     });
+    if (_isStopwatchRunning) {
+      _stopwatchBaseSeconds = updated;
+      _stopwatchAnchorTime = DateTime.now();
+    }
   }
 
   void _adjustPomodoro(int deltaSeconds) {
+    final updated = (_pomodoroSeconds + deltaSeconds).clamp(10, 86400);
     setState(() {
-      _pomodoroSeconds = (_pomodoroSeconds + deltaSeconds).clamp(10, 86400);
+      _pomodoroSeconds = updated;
     });
+    if (_isPomodoroRunning) {
+      _pomodoroEndTime = DateTime.now().add(Duration(seconds: updated));
+    }
   }
 
   String _formatStopwatch(int totalSecs) {
@@ -152,9 +234,11 @@ class _FocusTimerScreenState extends State<FocusTimerScreen>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _tabController.dispose();
     _stopwatchTimer?.cancel();
     _pomodoroTimer?.cancel();
+    ScreenWakeService.setKeepScreenOn(false);
     super.dispose();
   }
 

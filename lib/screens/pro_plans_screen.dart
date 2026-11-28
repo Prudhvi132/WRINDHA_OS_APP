@@ -98,26 +98,6 @@ class _ProPlansScreenState extends State<ProPlansScreen> {
           'WrindhaOS Plans',
           style: TextStyle(color: textPrimary, fontWeight: FontWeight.w800),
         ),
-        actions: [
-          TextButton(
-            onPressed: () async {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Checking Google Play for active subscriptions...'),
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
-              await _billingService.restorePurchases();
-            },
-            child: const Text(
-              'Restore',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF0D5CE5),
-              ),
-            ),
-          ),
-        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12.0),
@@ -426,21 +406,6 @@ class _ProPlansScreenState extends State<ProPlansScreen> {
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
                         color: textSecondary,
-                      ),
-                    ),
-                  ],
-                  if (!isPro &&
-                      !_billingService.isVerifying &&
-                      _billingService.errorMessage != null &&
-                      _billingService.errorMessage!.isNotEmpty) ...[
-                    const SizedBox(height: 10),
-                    Text(
-                      _billingService.errorMessage!,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFFE11D48),
                       ),
                     ),
                   ],

@@ -133,10 +133,14 @@ class BillingService extends ChangeNotifier {
         }
       } else if (response.productDetails.isNotEmpty) {
         // Find matching product or take first returned
-        proProduct = response.productDetails.firstWhere(
-          (p) => p.id == proSubscriptionId,
-          orElse: () => response.productDetails.first,
-        );
+        ProductDetails matched = response.productDetails.first;
+        for (final p in response.productDetails) {
+          if (p.id == proSubscriptionId) {
+            matched = p;
+            break;
+          }
+        }
+        proProduct = matched;
         errorMessage = null;
         if (kDebugMode) {
           print('[BILLING SERVICE] Found Product: ${proProduct!.id} - Price: ${proProduct!.price}');
