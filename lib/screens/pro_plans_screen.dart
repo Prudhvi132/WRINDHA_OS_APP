@@ -13,13 +13,19 @@ class ProPlansScreen extends StatefulWidget {
   State<ProPlansScreen> createState() => _ProPlansScreenState();
 }
 
-class _ProPlansScreenState extends State<ProPlansScreen> {
+class _ProPlansScreenState extends State<ProPlansScreen> with WidgetsBindingObserver {
   bool _isProcessing = false;
+  bool _wasPro = false;
+  bool _hasRedirected = false;
+  bool _awaitingExternalPayment = false;
+  String? _lastShownError;
   final BillingService _billingService = BillingService();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _wasPro = Provider.of<AppProvider>(context, listen: false).user.isPremium;
     _billingService.addListener(_onBillingUpdated);
     if (_billingService.proProduct == null) {
       _billingService.queryProducts();
@@ -27,16 +33,51 @@ class _ProPlansScreenState extends State<ProPlansScreen> {
   }
 
   void _onBillingUpdated() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {});
+    final err = _billingService.errorMessage;
+    if (err != null &&
+        err.isNotEmpty &&
+        err != _lastShownError &&
+        !_billingService.isProcessing &&
+        !_billingService.isVerifying) {
+      _lastShownError = err;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(err),
+          backgroundColor: const Color(0xFFE11D48),
+          behavior: SnackBarBehavior.floating,
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: Colors.white,
+            onPressed: () => _handleUpgradeToPro(context),
+          ),
+        ),
+      );
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _awaitingExternalPayment) {
+      _awaitingExternalPayment = false;
+      final isPro = Provider.of<AppProvider>(context, listen: false).user.isPremium;
+      if (!isPro && !_billingService.isVerifying) {
+        _billingService.restorePurchases();
+      }
+    }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _billingService.removeListener(_onBillingUpdated);
     super.dispose();
   }
 
   void _handleUpgradeToPro(BuildContext context) async {
+    _lastShownError = null;
+    _awaitingExternalPayment = true;
     setState(() => _isProcessing = true);
 
     bool launched = false;
@@ -54,13 +95,16 @@ class _ProPlansScreenState extends State<ProPlansScreen> {
     }
 
     if (launched || !mounted) return;
+    _awaitingExternalPayment = false;
     if (!context.mounted) return;
 
     // Show error and let user retry - no developer mode fallback
-    if (_billingService.errorMessage != null && _billingService.errorMessage!.isNotEmpty) {
+    final err = _billingService.errorMessage;
+    if (err != null && err.isNotEmpty && err != _lastShownError) {
+      _lastShownError = err;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(_billingService.errorMessage!),
+          content: Text(err),
           backgroundColor: const Color(0xFFE11D48),
           behavior: SnackBarBehavior.floating,
           action: SnackBarAction(
@@ -78,6 +122,23 @@ class _ProPlansScreenState extends State<ProPlansScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final provider = Provider.of<AppProvider>(context);
     final isPro = provider.user.isPremium;
+
+    if (!_wasPro && isPro && !_hasRedirected) {
+      _hasRedirected = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('🎉 WrindhaOS Pro activated! Welcome to Pro.'),
+            backgroundColor: Color(0xFF10B981),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        if (Navigator.of(context).canPop()) {
+          Navigator.of(context).pop(true);
+        }
+      });
+    }
 
     const primaryColor = Color(0xFF0D5CE5);
     final textPrimary = isDark ? Colors.white : const Color(0xFF0F172A);
